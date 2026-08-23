@@ -152,10 +152,11 @@ body.offline .offline-flag{display:inline-block;}
 .chip.type-procede{background:rgba(53,208,178,0.15); border-color:rgba(53,208,178,0.5);}
 .timeline{
   position:relative; height:220px; border:1px solid var(--line); border-radius:var(--radius);
+  padding:0 80px;
   background:
     repeating-linear-gradient(90deg, rgba(244,240,234,0.05) 0 1px, transparent 1px 10%),
     var(--bg-panel);
-  overflow:hidden;
+  overflow:visible;
 }
 .timeline::before{
   content:"début"; position:absolute; left:10px; top:8px; font-size:11px; color:var(--text-dim); letter-spacing:.08em; text-transform:uppercase;
@@ -171,6 +172,23 @@ body.offline .offline-flag{display:inline-block;}
 .timeline-chip.type-procede{background:rgba(53,208,178,0.9); color:#08221c; font-weight:700;}
 .timeline-chip .rm{cursor:pointer; opacity:.6; font-weight:800;}
 .timeline-chip .rm:hover{opacity:1;}
+.timeline-chip.type-note{
+  width:24px; height:24px; padding:0; border-radius:50%; justify-content:center;
+  background:var(--amber); color:#221a08; font-weight:800; z-index:3; overflow:visible;
+  transition:width .18s ease, height .18s ease, border-radius .18s ease, padding .18s ease;
+}
+.timeline-chip.type-note .note-icon{font-size:14px; line-height:1;}
+.timeline-chip.type-note textarea{
+  display:none; position:absolute; top:32px; left:50%; transform:translateX(-50%);
+  width:190px; min-height:76px; background:var(--bg-panel-2); color:var(--text);
+  border:1px solid var(--line); border-radius:10px; padding:8px; font-size:13px; z-index:25;
+}
+.timeline-chip.type-note.expanded{
+  width:auto; min-width:60px; height:auto; border-radius:14px; padding:6px 10px; z-index:30;
+  align-items:flex-start;
+}
+.timeline-chip.type-note.expanded textarea{display:block;}
+.timeline-add-hint{font-size:12px; color:var(--text-dim); margin-top:8px;}
 
 /* ---------- tables (admin) ---------- */
 table{width:100%; border-collapse:collapse; font-size:14px;}
@@ -545,20 +563,41 @@ function editorPhaseRecherche(d){
 function d_setPhase(p){ state.leconDraft.phase = p; render(); }
 
 function renderBubbleField(){
-  const el = document.getElementById('bubbleField');
-  if(!el) return;
   const d = state.leconDraft;
+  renderBubbles('bubbleField', d.Inducteur, d.Mots||[]);
+}
+
+// Placement en spirale avec évitement de collision : chaque mot cherche
+// la première position libre en s'éloignant progressivement du centre.
+function renderBubbles(elId, inducteur, mots){
+  const el = document.getElementById(elId);
+  if(!el) return;
   const w = el.clientWidth, h = el.clientHeight;
   const cx = w/2, cy = h/2;
-  let html = `<div class="bubble inducteur" style="left:${cx-85}px; top:${cy-85}px;">${escapeHtml(d.Inducteur||'…')}</div>`;
-  (d.Mots||[]).forEach((mot,i)=>{
-    const angle = i * 137.5 * Math.PI/180;
-    const radius = 95 + (i%5)*34;
-    const x = cx + Math.cos(angle)*radius - 48;
-    const y = cy + Math.sin(angle)*radius - 48;
-    const dx = (Math.random()*10-5).toFixed(1), dy=(Math.random()*10-5).toFixed(1);
+  const rInd = 85;
+  const placed = [{x:cx, y:cy, r:rInd}];
+  let html = `<div class="bubble inducteur" style="left:${cx-rInd}px; top:${cy-rInd}px;">${escapeHtml(inducteur||'…')}</div>`;
+  (mots||[]).forEach((mot,i)=>{
+    const r = 48;
+    let angle = i * 137.5 * Math.PI/180;
+    let radius = rInd + 55;
+    let x=cx, y=cy, ok=false, tries=0;
+    while(!ok && tries<80){
+      x = cx + Math.cos(angle)*radius;
+      y = cy + Math.sin(angle)*radius;
+      ok = placed.every(p=>{
+        const dx=x-p.x, dy=y-p.y;
+        return Math.sqrt(dx*dx+dy*dy) >= (p.r + r + 8);
+      });
+      if(!ok){ radius += 12; angle += 0.34; }
+      tries++;
+    }
+    x = Math.max(r, Math.min(w-r, x));
+    y = Math.max(r, Math.min(h-r, y));
+    placed.push({x, y, r});
+    const dx = (Math.random()*8-4).toFixed(1), dy=(Math.random()*8-4).toFixed(1);
     const dur = (5+Math.random()*4).toFixed(1);
-    html += `<div class="bubble mot" style="left:${Math.max(0,Math.min(w-96,x))}px; top:${Math.max(0,Math.min(h-96,y))}px; --dx:${dx}px; --dy:${dy}px; animation-duration:${dur}s;">${escapeHtml(mot)}</div>`;
+    html += `<div class="bubble mot" style="left:${x-r}px; top:${y-r}px; --dx:${dx}px; --dy:${dy}px; animation-duration:${dur}s;">${escapeHtml(mot)}</div>`;
   });
   el.innerHTML = html;
 }
@@ -746,7 +785,7 @@ function viewEleveSpace(){
 function eleveTabHistorique(){
   if(!state.lecons.length) return '<p class="muted">Aucune leçon disponible pour l\'instant.</p>';
   setTimeout(()=>{
-    state.lecons.forEach(l=>renderStaticBubbles('hist-'+l.id, l.Inducteur||'', l.Mots||[]));
+    state.lecons.forEach(l=>renderBubbles('hist-'+l.id, l.Inducteur||'', l.Mots||[]));
   },0);
   return state.lecons.map(l=>`
     <div class="card" style="margin-bottom:20px;">
@@ -757,23 +796,9 @@ function eleveTabHistorique(){
     </div>`).join('');
 }
 
-function renderStaticBubbles(elId, inducteur, mots){
-  const el = document.getElementById(elId); if(!el) return;
-  const w = el.clientWidth, h = el.clientHeight, cx=w/2, cy=h/2;
-  let html = `<div class="bubble inducteur" style="left:${cx-85}px; top:${cy-85}px;">${escapeHtml(inducteur||'…')}</div>`;
-  mots.forEach((mot,i)=>{
-    const angle = i * 137.5 * Math.PI/180;
-    const radius = 95 + (i%5)*34;
-    const x = cx + Math.cos(angle)*radius - 48;
-    const y = cy + Math.sin(angle)*radius - 48;
-    html += `<div class="bubble mot" style="left:${Math.max(0,Math.min(w-96,x))}px; top:${Math.max(0,Math.min(h-96,y))}px;">${escapeHtml(mot)}</div>`;
-  });
-  el.innerHTML = html;
-}
-
 function eleveTabBrainstorm(){
   const g = state.group;
-  const themeIdeas = ['Le temps qui passe',"L'enfermement",'La rumeur','Les racines',"Sous l'eau",'La foule','Le miroir',"L'attente",'Se relever','Le fil invisible'];
+  const themeIdeas = ['Le temps qui passe',"L'enfermement",'La rumeur','Les racines',"Sous l'eau",'La foule','Le miroir',"L'attente",'Se relever','Le fil invisible','La métamorphose','Le poids des autres','La frontière','Renaître','Le souffle coupé','La chute libre','Les liens invisibles','Le masque','La dérive','Occuper l\'espace','Le vide','La résistance','L\'écho','Fragile','Le passage','La marée','S\'effacer','La faille','Le vertige','Traverser','L\'empreinte','Le silence qui pèse','Sortir du rang','La spirale','Ce qui reste','Se dévoiler'];
   setTimeout(()=>{
     document.getElementById('themeInput').oninput = debounce((e)=>{ g.Theme = e.target.value; saveGroupe({Theme:g.Theme}); renderBubbleFieldGroupe(); },500);
     document.getElementById('themeInput').addEventListener('blur',()=>renderBubbleFieldGroupe());
@@ -805,9 +830,8 @@ function eleveTabBrainstorm(){
   </div>`;
 }
 function renderBubbleFieldGroupe(){
-  const el = document.getElementById('bubbleFieldG'); if(!el) return;
   const g = state.group;
-  renderStaticBubbles('bubbleFieldG', g.Theme, g.Mots||[]);
+  renderBubbles('bubbleFieldG', g.Theme, g.Mots||[]);
 }
 
 function eleveTabProcedes(){
@@ -843,6 +867,10 @@ function eleveTabFrise(){
     ...(g.Mots||[]).map(m=>({type:'mot', texte:m})),
     ...(g.ProcedesChoisis||[]).map(p=>({type:'procede', texte:p.Nom}))
   ];
+  function posFromEvent(e, rect){
+    const innerW = rect.width - 160;
+    return Math.max(0, Math.min(100, ((e.clientX - rect.left - 80) / innerW) * 100));
+  }
   setTimeout(()=>{
     document.querySelectorAll('.chip[draggable]').forEach(c=>{
       c.addEventListener('dragstart', e=>{
@@ -851,8 +879,16 @@ function eleveTabFrise(){
     });
     document.querySelectorAll('.timeline-chip[draggable]').forEach(c=>{
       c.addEventListener('dragstart', e=>{
+        if(e.target.tagName==='TEXTAREA'){ e.preventDefault(); return; }
         e.dataTransfer.setData('text/plain', JSON.stringify({type:c.dataset.type, texte:c.dataset.texte, existingId:c.dataset.id}));
       });
+    });
+    document.querySelectorAll('.timeline-chip.type-note').forEach(el=>{
+      const ta = el.querySelector('textarea');
+      el.addEventListener('mouseenter', ()=>el.classList.add('expanded'));
+      el.addEventListener('mouseleave', ()=>{ if(document.activeElement!==ta) el.classList.remove('expanded'); });
+      ta.addEventListener('focus', ()=>el.classList.add('expanded'));
+      ta.addEventListener('blur', ()=>el.classList.remove('expanded'));
     });
     const tl = document.getElementById('timeline');
     tl.addEventListener('dragover', e=>e.preventDefault());
@@ -860,7 +896,7 @@ function eleveTabFrise(){
       e.preventDefault();
       const data = JSON.parse(e.dataTransfer.getData('text/plain'));
       const rect = tl.getBoundingClientRect();
-      const pos = Math.max(2, Math.min(98, ((e.clientX-rect.left)/rect.width)*100));
+      const pos = posFromEvent(e, rect);
       g.Frise = g.Frise||[];
       if(data.existingId){
         const item = g.Frise.find(x=>x.id===data.existingId);
@@ -870,21 +906,46 @@ function eleveTabFrise(){
       }
       saveGroupe({Frise:g.Frise}); render();
     });
+    tl.addEventListener('dblclick', e=>{
+      if(e.target.closest('.timeline-chip')) return;
+      const rect = tl.getBoundingClientRect();
+      const pos = posFromEvent(e, rect);
+      g.Frise = g.Frise||[];
+      g.Frise.push({id:uid(), type:'note', texte:'', pos});
+      saveGroupe({Frise:g.Frise}); render();
+    });
   },0);
+  const chipLeft = pos => `calc(80px + (100% - 160px) * ${(pos/100).toFixed(4)})`;
   return `
-  <p class="muted">Glissez vos mots et procédés sur la frise pour construire le déroulé temporel de votre chorégraphie.</p>
+  <p class="muted">Glissez vos mots et procédés sur la frise pour construire le déroulé temporel de votre chorégraphie. Double-cliquez sur un espace vide pour ajouter une note libre.</p>
   <h4 style="margin-bottom:8px;">À placer</h4>
   <div class="palette">
     ${tokens.map(t=>`<div class="chip type-${t.type}" draggable="true" data-type="${t.type}" data-texte="${escapeHtml(t.texte)}">${escapeHtml(t.texte)}</div>`).join('') || '<span class="muted">Ajoutez des mots et des procédés dans les onglets précédents.</span>'}
   </div>
   <div class="timeline" id="timeline">
-    ${(g.Frise||[]).map((f,i)=>`
-      <div class="timeline-chip type-${f.type}" draggable="true" data-id="${f.id}" data-type="${f.type}" data-texte="${escapeHtml(f.texte)}"
-        style="left:${f.pos}%; top:${40 + (i%3)*52}px;">
+    ${(g.Frise||[]).map((f,i)=>{
+      if(f.type==='note'){
+        return `<div class="timeline-chip type-note" draggable="true" data-id="${f.id}" data-type="note" data-texte=""
+          style="left:${chipLeft(f.pos)}; top:${40 + (i%3)*52}px;">
+          <span class="note-icon">${f.texte?'📝':'+'}</span>
+          <span class="rm" onclick="event.stopPropagation();removeFriseItem('${f.id}')">✕</span>
+          <textarea placeholder="Note pour cet instant de la chorégraphie…" oninput="updateNoteText('${f.id}', this.value)">${escapeHtml(f.texte)}</textarea>
+        </div>`;
+      }
+      return `<div class="timeline-chip type-${f.type}" draggable="true" data-id="${f.id}" data-type="${f.type}" data-texte="${escapeHtml(f.texte)}"
+        style="left:${chipLeft(f.pos)}; top:${40 + (i%3)*52}px;">
         ${escapeHtml(f.texte)} <span class="rm" onclick="removeFriseItem('${f.id}')">✕</span>
-      </div>`).join('')}
-  </div>`;
+      </div>`;
+    }).join('')}
+  </div>
+  <p class="timeline-add-hint">💡 Astuce : double-cliquez n'importe où sur la frise pour ajouter une note libre à cet endroit précis.</p>`;
 }
+async function updateNoteText(id, val){
+  const g = state.group;
+  const item = (g.Frise||[]).find(x=>x.id===id);
+  if(item){ item.texte = val; debounceSaveFrise(); }
+}
+const debounceSaveFrise = debounce(()=>{ saveGroupe({Frise: state.group.Frise}); }, 500);
 async function removeFriseItem(id){
   const g = state.group;
   g.Frise = (g.Frise||[]).filter(x=>x.id!==id);

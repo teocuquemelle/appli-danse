@@ -212,18 +212,27 @@ th{color:var(--text-dim); font-weight:700; font-size:12.5px; text-transform:uppe
    Console Firebase > Paramètres du projet > Vos applications.
    ========================================================= */
 const firebaseConfig = {
-  apiKey: "AIzaSyCcy9YEtLAfAzSqqKDfBKheUq9BshItDeY",
-  authDomain: "appli-danse.firebaseapp.com",
-  projectId: "appli-danse",
-  storageBucket: "appli-danse.firebasestorage.app",
-  messagingSenderId: "853872515382",
-  appId: "1:853872515382:web:9619be7d136449c539bb97",
-  measurementId: "G-DXB665Q2E8"
+  apiKey: "REMPLACER",
+  authDomain: "REMPLACER.firebaseapp.com",
+  projectId: "REMPLACER",
+  storageBucket: "REMPLACER.appspot.com",
+  messagingSenderId: "REMPLACER",
+  appId: "REMPLACER"
 };
-firebase.initializeApp(firebaseConfig);
-const auth = firebase.auth();
-const db = firebase.firestore();
-try{ db.enablePersistence({synchronizeTabs:true}).catch(()=>{}); }catch(e){}
+const firebaseReady = !Object.values(firebaseConfig).some(v => v === "REMPLACER");
+let auth, db;
+if(firebaseReady){
+  try{
+    firebase.initializeApp(firebaseConfig);
+    auth = firebase.auth();
+    db = firebase.firestore();
+    db.enablePersistence({synchronizeTabs:true}).catch(()=>{});
+  }catch(e){
+    console.error('Erreur Firebase :', e);
+  }
+} else {
+  console.warn('Config Firebase non renseignée : remplacez les "REMPLACER" dans firebaseConfig.');
+}
 
 /* ---------------- état global ---------------- */
 const state = {
@@ -282,6 +291,10 @@ function refreshHeader(){
 /* ================= VUE : ACCUEIL ================= */
 function viewHome(){
   return `
+  ${!firebaseReady ? `<div class="card" style="max-width:640px;margin:0 auto 24px;border-color:var(--danger);">
+    <strong style="color:var(--danger);">⚠️ Firebase n'est pas encore configuré.</strong>
+    <p class="muted" style="font-size:13.5px;margin:6px 0 0;">Remplacez les valeurs "REMPLACER" dans le bloc <code>firebaseConfig</code> en haut du fichier <code>index.html</code> (voir le guide de mise en place). En attendant, la connexion et l'enregistrement des données ne fonctionneront pas.</p>
+  </div>` : ''}
   <div class="center" style="max-width:640px;margin:6vh auto 0;">
     <h1 class="display" style="font-size:38px;margin-bottom:6px;">Le carnet de composition</h1>
     <p class="muted" style="margin-bottom:36px;">Inducteurs, mots, procédés de composition et frise chronologique — de la recherche collective à la chorégraphie de groupe.</p>
@@ -731,13 +744,16 @@ function viewEleveSpace(){
 
 function eleveTabHistorique(){
   if(!state.lecons.length) return '<p class="muted">Aucune leçon disponible pour l\'instant.</p>';
+  setTimeout(()=>{
+    state.lecons.forEach(l=>renderStaticBubbles('hist-'+l.id, l.Inducteur||'', l.Mots||[]));
+  },0);
   return state.lecons.map(l=>`
     <div class="card" style="margin-bottom:20px;">
       <div class="section-title"><h3 class="display" style="margin:0;">Leçon ${l.Numero} — ${escapeHtml(l.Inducteur)}</h3></div>
       <div class="bubblefield" style="height:280px;" id="hist-${l.id}"></div>
       ${l.Procede?`<div class="pill" style="margin-top:12px;">Procédé : ${l.Procede.Nom}</div>
       <div class="procede-card" style="margin-top:10px;"><div class="procede-text"><p class="muted">${l.Procede.Description||''}</p></div>${l.Procede.VideoUrl?`<div class="procede-video">${embedVideo(l.Procede.VideoUrl)}</div>`:''}</div>`:''}
-    </div>`).join('') + `<script>${state.lecons.map(l=>`renderStaticBubbles('hist-${l.id}', ${JSON.stringify(l.Inducteur||'')}, ${JSON.stringify(l.Mots||[])});`).join('')}</script>`;
+    </div>`).join('');
 }
 
 function renderStaticBubbles(elId, inducteur, mots){
@@ -905,20 +921,23 @@ function render(){
 }
 
 /* ---------------- démarrage ---------------- */
-auth.onAuthStateChanged(async (user)=>{
-  if(user){
-    state.adminUser = user.email;
-    await loadLecons(); await loadProcedes(); await loadGroupes();
-    if(state.view==='home' || state.view==='admin-login') go('admin-panel');
-  } else if(state.group){
-    await loadLecons(); await loadProcedes();
-    if(state.view==='home') go('eleve-space');
-    else render();
-  } else {
-    render();
-  }
-});
-render();
+if(firebaseReady && auth){
+  auth.onAuthStateChanged(async (user)=>{
+    if(user){
+      state.adminUser = user.email;
+      await loadLecons(); await loadProcedes(); await loadGroupes();
+      if(state.view==='home' || state.view==='admin-login') go('admin-panel');
+    } else if(state.group){
+      await loadLecons(); await loadProcedes();
+      if(state.view==='home') go('eleve-space');
+      else render();
+    } else {
+      render();
+    }
+  });
+} else {
+  render();
+}
 
 if('serviceWorker' in navigator){
   window.addEventListener('load', ()=>{

@@ -773,7 +773,7 @@ function renderStaticBubbles(elId, inducteur, mots){
 
 function eleveTabBrainstorm(){
   const g = state.group;
-  const themeIdeas = ['Le temps qui passe','L\\'enfermement','La rumeur','Les racines','Sous l\\'eau','La foule','Le miroir','L\\'attente','Se relever','Le fil invisible'];
+  const themeIdeas = ['Le temps qui passe',"L'enfermement",'La rumeur','Les racines',"Sous l'eau",'La foule','Le miroir',"L'attente",'Se relever','Le fil invisible'];
   setTimeout(()=>{
     document.getElementById('themeInput').oninput = debounce((e)=>{ g.Theme = e.target.value; saveGroupe({Theme:g.Theme}); renderBubbleFieldGroupe(); },500);
     document.getElementById('themeInput').addEventListener('blur',()=>renderBubbleFieldGroupe());

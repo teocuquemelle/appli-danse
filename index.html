@@ -151,13 +151,18 @@ body.offline .offline-flag{display:inline-block;}
 .chip.type-mot{border-color:rgba(244,240,234,0.25);}
 .chip.type-procede{background:rgba(53,208,178,0.15); border-color:rgba(53,208,178,0.5);}
 .timeline{
-  position:relative; height:220px; border:1px solid var(--line); border-radius:var(--radius);
+  position:relative; height:330px; border:1px solid var(--line); border-radius:var(--radius);
   padding:0 80px;
   background:
     repeating-linear-gradient(90deg, rgba(244,240,234,0.05) 0 1px, transparent 1px 10%),
     var(--bg-panel);
   overflow:visible;
 }
+.timeline-lane-label{
+  position:absolute; left:10px; top:0; font-size:11px; letter-spacing:.06em; text-transform:uppercase;
+  color:var(--text-dim); font-weight:700; padding-top:4px;
+}
+.timeline-lane-sep{position:absolute; left:0; right:0; border-top:1px dashed var(--line);}
 .timeline::before{
   content:"début"; position:absolute; left:10px; top:8px; font-size:11px; color:var(--text-dim); letter-spacing:.08em; text-transform:uppercase;
 }
@@ -909,6 +914,8 @@ function eleveTabFrise(){
     tl.addEventListener('dblclick', e=>{
       if(e.target.closest('.timeline-chip')) return;
       const rect = tl.getBoundingClientRect();
+      const laneIdx = Math.floor((e.clientY - rect.top) / 108);
+      if(laneIdx !== 2){ toast('Double-cliquez sur la ligne « Notes » pour ajouter une note libre'); return; }
       const pos = posFromEvent(e, rect);
       g.Frise = g.Frise||[];
       g.Frise.push({id:uid(), type:'note', texte:'', pos});
@@ -916,29 +923,46 @@ function eleveTabFrise(){
     });
   },0);
   const chipLeft = pos => `calc(80px + (100% - 160px) * ${(pos/100).toFixed(4)})`;
+  // Trois couloirs fixes (Mots / Procédés / Notes) ; à l'intérieur d'un couloir,
+  // les éléments trop proches dans le temps se décalent automatiquement pour ne
+  // jamais se chevaucher.
+  const LANES = [{type:'mot', label:'Mots'}, {type:'procede', label:'Procédés'}, {type:'note', label:'Notes'}];
+  const laneH = 108, subH = 32, subCount = 3;
+  const positioned = [];
+  LANES.forEach((lane, laneIdx)=>{
+    const items = (g.Frise||[]).filter(f=>f.type===lane.type).sort((a,b)=>a.pos-b.pos);
+    const lastPosBySub = [];
+    items.forEach(f=>{
+      let sub = 0;
+      while(sub < subCount-1 && lastPosBySub[sub]!==undefined && Math.abs(f.pos-lastPosBySub[sub]) < 9) sub++;
+      lastPosBySub[sub] = f.pos;
+      positioned.push({...f, top: laneIdx*laneH + 30 + sub*subH});
+    });
+  });
   return `
-  <p class="muted">Glissez vos mots et procédés sur la frise pour construire le déroulé temporel de votre chorégraphie. Double-cliquez sur un espace vide pour ajouter une note libre.</p>
+  <p class="muted">Glissez vos mots et procédés sur la frise pour construire le déroulé temporel de votre chorégraphie. Double-cliquez sur la ligne « Notes » pour ajouter une note libre.</p>
   <h4 style="margin-bottom:8px;">À placer</h4>
   <div class="palette">
     ${tokens.map(t=>`<div class="chip type-${t.type}" draggable="true" data-type="${t.type}" data-texte="${escapeHtml(t.texte)}">${escapeHtml(t.texte)}</div>`).join('') || '<span class="muted">Ajoutez des mots et des procédés dans les onglets précédents.</span>'}
   </div>
   <div class="timeline" id="timeline">
-    ${(g.Frise||[]).map((f,i)=>{
+    ${LANES.map((lane,i)=>`<div class="timeline-lane-label" style="top:${i*laneH}px;">${lane.label}</div>${i>0?`<div class="timeline-lane-sep" style="top:${i*laneH}px;"></div>`:''}`).join('')}
+    ${positioned.map(f=>{
       if(f.type==='note'){
         return `<div class="timeline-chip type-note" draggable="true" data-id="${f.id}" data-type="note" data-texte=""
-          style="left:${chipLeft(f.pos)}; top:${40 + (i%3)*52}px;">
+          style="left:${chipLeft(f.pos)}; top:${f.top}px;">
           <span class="note-icon">${f.texte?'📝':'+'}</span>
           <span class="rm" onclick="event.stopPropagation();removeFriseItem('${f.id}')">✕</span>
           <textarea placeholder="Note pour cet instant de la chorégraphie…" oninput="updateNoteText('${f.id}', this.value)">${escapeHtml(f.texte)}</textarea>
         </div>`;
       }
       return `<div class="timeline-chip type-${f.type}" draggable="true" data-id="${f.id}" data-type="${f.type}" data-texte="${escapeHtml(f.texte)}"
-        style="left:${chipLeft(f.pos)}; top:${40 + (i%3)*52}px;">
+        style="left:${chipLeft(f.pos)}; top:${f.top}px;">
         ${escapeHtml(f.texte)} <span class="rm" onclick="removeFriseItem('${f.id}')">✕</span>
       </div>`;
     }).join('')}
   </div>
-  <p class="timeline-add-hint">💡 Astuce : double-cliquez n'importe où sur la frise pour ajouter une note libre à cet endroit précis.</p>`;
+  <p class="timeline-add-hint">💡 Chaque type d'élément a sa propre ligne (Mots / Procédés / Notes). Double-cliquez sur la ligne « Notes » pour ajouter une note libre à un endroit précis.</p>`;
 }
 async function updateNoteText(id, val){
   const g = state.group;

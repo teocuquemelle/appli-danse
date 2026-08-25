@@ -128,8 +128,15 @@ body.offline .offline-flag{display:inline-block;}
 }
 .bubble.mot{
   background:var(--bg-panel-2); border:1px solid var(--line); color:var(--text); font-size:14px;
-  width:96px; height:96px;
+  width:96px; height:96px; position:relative;
 }
+.bubble-rm{
+  position:absolute; top:-6px; right:-6px; width:22px; height:22px; border-radius:50%;
+  background:var(--danger); color:#2a0d0d; font-family:'Manrope',sans-serif; font-weight:800; font-size:12px;
+  display:flex; align-items:center; justify-content:center; cursor:pointer; z-index:6;
+  box-shadow:0 2px 6px rgba(0,0,0,0.4); animation:none;
+}
+.bubble-rm:hover{background:#ff7373;}
 .bubble.mot:nth-child(3n){border-color:rgba(53,208,178,0.5);}
 .bubble.mot:nth-child(4n){border-color:rgba(242,177,52,0.5);}
 
@@ -569,12 +576,13 @@ function d_setPhase(p){ state.leconDraft.phase = p; render(); }
 
 function renderBubbleField(){
   const d = state.leconDraft;
-  renderBubbles('bubbleField', d.Inducteur, d.Mots||[]);
+  renderBubbles('bubbleField', d.Inducteur, d.Mots||[], i=>{ d.Mots.splice(i,1); renderBubbleField(); });
 }
 
 // Placement en spirale avec évitement de collision : chaque mot cherche
 // la première position libre en s'éloignant progressivement du centre.
-function renderBubbles(elId, inducteur, mots){
+// onRemove(index) optionnel : si fourni, affiche un bouton ✕ sur chaque bulle-mot.
+function renderBubbles(elId, inducteur, mots, onRemove){
   const el = document.getElementById(elId);
   if(!el) return;
   const w = el.clientWidth, h = el.clientHeight;
@@ -602,9 +610,17 @@ function renderBubbles(elId, inducteur, mots){
     placed.push({x, y, r});
     const dx = (Math.random()*8-4).toFixed(1), dy=(Math.random()*8-4).toFixed(1);
     const dur = (5+Math.random()*4).toFixed(1);
-    html += `<div class="bubble mot" style="left:${x-r}px; top:${y-r}px; --dx:${dx}px; --dy:${dy}px; animation-duration:${dur}s;">${escapeHtml(mot)}</div>`;
+    html += `<div class="bubble mot" data-idx="${i}" style="left:${x-r}px; top:${y-r}px; --dx:${dx}px; --dy:${dy}px; animation-duration:${dur}s;">${escapeHtml(mot)}${onRemove?'<span class="bubble-rm">✕</span>':''}</div>`;
   });
   el.innerHTML = html;
+  if(onRemove){
+    el.querySelectorAll('.bubble.mot').forEach(b=>{
+      b.querySelector('.bubble-rm').addEventListener('click', (e)=>{
+        e.stopPropagation();
+        onRemove(parseInt(b.dataset.idx,10));
+      });
+    });
+  }
 }
 
 function editorPhaseBulles(d){
@@ -836,7 +852,9 @@ function eleveTabBrainstorm(){
 }
 function renderBubbleFieldGroupe(){
   const g = state.group;
-  renderBubbles('bubbleFieldG', g.Theme, g.Mots||[]);
+  renderBubbles('bubbleFieldG', g.Theme, g.Mots||[], i=>{
+    g.Mots.splice(i,1); saveGroupe({Mots:g.Mots}); renderBubbleFieldGroupe();
+  });
 }
 
 function eleveTabProcedes(){

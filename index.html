@@ -234,7 +234,6 @@ th{color:var(--text-dim); font-weight:700; font-size:12.5px; text-transform:uppe
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
-<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-storage-compat.js"></script>
 
 <script>
 /* =========================================================
@@ -252,13 +251,12 @@ const firebaseConfig = {
   measurementId: "G-DXB665Q2E8"
 };
 const firebaseReady = !Object.values(firebaseConfig).some(v => v === "REMPLACER");
-let auth, db, storage;
+let auth, db;
 if(firebaseReady){
   try{
     firebase.initializeApp(firebaseConfig);
     auth = firebase.auth();
     db = firebase.firestore();
-    storage = firebase.storage();
     db.enablePersistence({synchronizeTabs:true}).catch(()=>{});
   }catch(e){
     console.error('Erreur Firebase :', e);
@@ -1271,36 +1269,32 @@ function eleveTabVideo(){
     if(input) input.onchange = async ()=>{
       const file = input.files[0];
       if(!file) return;
-      if(!storage){ toast('Firebase Storage indisponible'); return; }
-      const status = document.getElementById('uploadStatus');
-      status.textContent = 'Envoi en cours…';
-      try{
-        const path = `analyses/${g.id}/${state.moi}_${Date.now()}_${file.name}`;
-        const ref = storage.ref().child(path);
-        await ref.put(file);
-        const url = await ref.getDownloadURL();
-        await db.collection('analysesVideo').add({GroupeId:g.id, Analyste:state.moi, VideoUrl:url, VideoNom:file.name, Notes:[], DateCreation:new Date().toISOString()});
-        await loadAnalysesVideo(g.id);
-        status.textContent = ''; toast('Vidéo envoyée'); render();
-      }catch(err){
-        status.textContent = 'Échec de l\'envoi : ' + (err.message||err);
-      }
+      const ref = await db.collection('analysesVideo').add({GroupeId:g.id, Analyste:state.moi, VideoNom:file.name, Notes:[], DateCreation:new Date().toISOString()});
+      state.videoBlobs = state.videoBlobs || {};
+      state.videoBlobs[ref.id] = URL.createObjectURL(file);
+      await loadAnalysesVideo(g.id);
+      toast('Vidéo prête pour l\'analyse'); render();
     };
   },0);
   return `
   <div class="card" style="max-width:520px;">
-    <h3 style="margin-top:0;">Filmer / envoyer une séquence</h3>
-    <p class="muted" style="font-size:13.5px;">Sur tablette, ceci ouvre directement l'appareil photo pour filmer. Sur ordinateur, choisis un fichier vidéo déjà enregistré.</p>
+    <h3 style="margin-top:0;">Filmer / choisir une séquence</h3>
+    <p class="muted" style="font-size:13.5px;">Sur tablette, ceci ouvre directement l'appareil photo pour filmer. Sur ordinateur, choisis un fichier vidéo déjà enregistré. La vidéo reste sur cet appareil (pas d'envoi en ligne) ; seules tes notes horodatées sont sauvegardées et visibles par le prof.</p>
     <input id="videoFile" type="file" accept="video/*" capture="environment">
-    <p id="uploadStatus" class="muted" style="font-size:13px;min-height:18px;"></p>
   </div>
   <h3 style="margin:22px 0 10px;">Mes analyses (${mesAnalyses.length})</h3>
-  ${mesAnalyses.length ? mesAnalyses.map(v=>videoAnalysisCard(v)).join('') : '<p class="muted">Aucune vidéo envoyée pour l\'instant.</p>'}`;
+  ${mesAnalyses.length ? mesAnalyses.map(v=>videoAnalysisCard(v)).join('') : '<p class="muted">Aucune vidéo pour l\'instant.</p>'}`;
 }
 function videoAnalysisCard(v){
+  const blobUrl = (state.videoBlobs||{})[v.id];
   return `
   <div class="card" style="margin-bottom:16px;">
-    <video controls src="${v.VideoUrl}" style="width:100%; border-radius:10px; max-height:340px;"></video>
+    ${blobUrl
+      ? `<video controls src="${blobUrl}" style="width:100%; border-radius:10px; max-height:340px;"></video>`
+      : `<div class="card" style="text-align:center; padding:24px; background:var(--bg-panel-2);">
+           <p class="muted" style="margin:0 0 10px;">Vidéo non disponible après rechargement de la page (elle n'est pas envoyée en ligne). Tes notes sont conservées ci-dessous ; reselectionne le fichier pour revoir la vidéo :</p>
+           <input type="file" accept="video/*" onchange="reattachVideo('${v.id}', this.files[0])">
+         </div>`}
     <p class="muted" style="font-size:12.5px; margin:8px 0 4px;">${escapeHtml(v.VideoNom||'')}</p>
     <div style="display:flex; gap:8px; margin:10px 0;">
       <input type="text" id="time-${v.id}" placeholder="0:45" style="max-width:90px;">
@@ -1309,6 +1303,12 @@ function videoAnalysisCard(v){
     </div>
     ${(v.Notes||[]).map(n=>`<div class="pill" style="margin:3px 4px 3px 0;">⏱ ${escapeHtml(n.time)} — ${escapeHtml(n.texte)}</div>`).join('')}
   </div>`;
+}
+function reattachVideo(id, file){
+  if(!file) return;
+  state.videoBlobs = state.videoBlobs || {};
+  state.videoBlobs[id] = URL.createObjectURL(file);
+  render();
 }
 async function addVideoNote(id){
   const time = document.getElementById('time-'+id).value.trim();

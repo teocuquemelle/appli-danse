@@ -234,6 +234,7 @@ th{color:var(--text-dim); font-weight:700; font-size:12.5px; text-transform:uppe
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-storage-compat.js"></script>
 
 <script>
 /* =========================================================
@@ -251,12 +252,13 @@ const firebaseConfig = {
   measurementId: "G-DXB665Q2E8"
 };
 const firebaseReady = !Object.values(firebaseConfig).some(v => v === "REMPLACER");
-let auth, db;
+let auth, db, storage;
 if(firebaseReady){
   try{
     firebase.initializeApp(firebaseConfig);
     auth = firebase.auth();
     db = firebase.firestore();
+    storage = firebase.storage();
     db.enablePersistence({synchronizeTabs:true}).catch(()=>{});
   }catch(e){
     console.error('Erreur Firebase :', e);
@@ -266,18 +268,25 @@ if(firebaseReady){
 }
 
 /* ---------------- état global ---------------- */
+const ROLES = ['Spectateur','Coach','Analyseur vidéo'];
 const state = {
   view: 'home',
   adminUser: null,
   group: JSON.parse(localStorage.getItem('danse_group')||'null'),
+  moi: null, // identité de l'élève courant dans le groupe (choisie à la connexion)
   lecons: [],
   procedes: [],
+  composantes: [],
   groupes: [],
+  fichesSpectateur: [],
+  notesCoach: [],
+  analysesVideo: [],
   currentLeconId: null,
-  leconDraft: null,     // {Numero, Inducteur, Mots, Procede}
+  leconDraft: null,     // {Numero, Inducteur, Mots, Procede, Composante}
   adminTab: 'lecons',
   eleveTab: 'historique'
 };
+if(state.group){ state.moi = localStorage.getItem('danse_moi_'+state.group.id) || null; }
 
 function toast(msg){
   const t = document.getElementById('toast');
@@ -311,9 +320,9 @@ function refreshHeader(){
     who.classList.remove('hidden'); btn.classList.remove('hidden');
     btn.onclick = ()=>{ auth.signOut(); state.adminUser=null; go('home'); };
   } else if(state.group){
-    who.textContent = 'Groupe · ' + state.group.Nom;
+    who.textContent = 'Groupe · ' + state.group.Nom + (state.moi ? ' — ' + state.moi : '');
     who.classList.remove('hidden'); btn.classList.remove('hidden');
-    btn.onclick = ()=>{ localStorage.removeItem('danse_group'); state.group=null; go('home'); };
+    btn.onclick = ()=>{ localStorage.removeItem('danse_group'); localStorage.removeItem('danse_moi_'+state.group.id); state.group=null; state.moi=null; go('home'); };
   } else {
     who.classList.add('hidden'); btn.classList.add('hidden');
   }
@@ -356,7 +365,7 @@ function viewAdminLogin(){
       try{
         await auth.signInWithEmailAndPassword(email, pwd);
         state.adminUser = email;
-        await loadLecons(); await loadProcedes(); await loadGroupes();
+        await loadLecons(); await loadProcedes(); await loadComposantes(); await loadGroupes(); state.allFiches = await loadAllFichesSpectateur(); state.allNotes = await loadAllNotesCoach(); state.allAnalyses = await loadAllAnalysesVideo();
         go('admin-panel');
       }catch(ex){ err.textContent = "Connexion impossible : " + (ex.message||ex); }
     };
@@ -384,18 +393,48 @@ async function loadProcedes(){
   const snap = await db.collection('procedes').orderBy('Nom').get();
   state.procedes = snap.docs.map(d=>({id:d.id, ...d.data()}));
 }
+async function loadComposantes(){
+  const snap = await db.collection('composantes').orderBy('Nom').get();
+  state.composantes = snap.docs.map(d=>({id:d.id, ...d.data()}));
+}
 async function loadGroupes(){
   const snap = await db.collection('groupes').orderBy('DateCreation').get();
   state.groupes = snap.docs.map(d=>({id:d.id, ...d.data()}));
 }
+async function loadFichesSpectateur(groupeId){
+  const snap = await db.collection('fichesSpectateur').where('GroupeId','==',groupeId).get();
+  state.fichesSpectateur = snap.docs.map(d=>({id:d.id, ...d.data()}));
+}
+async function loadNotesCoach(groupeId){
+  const snap = await db.collection('notesCoach').where('GroupeId','==',groupeId).get();
+  state.notesCoach = snap.docs.map(d=>({id:d.id, ...d.data()}));
+}
+async function loadAnalysesVideo(groupeId){
+  const snap = await db.collection('analysesVideo').where('GroupeId','==',groupeId).get();
+  state.analysesVideo = snap.docs.map(d=>({id:d.id, ...d.data()}));
+}
+async function loadAllFichesSpectateur(){
+  const snap = await db.collection('fichesSpectateur').get();
+  return snap.docs.map(d=>({id:d.id, ...d.data()}));
+}
+async function loadAllNotesCoach(){
+  const snap = await db.collection('notesCoach').get();
+  return snap.docs.map(d=>({id:d.id, ...d.data()}));
+}
+async function loadAllAnalysesVideo(){
+  const snap = await db.collection('analysesVideo').get();
+  return snap.docs.map(d=>({id:d.id, ...d.data()}));
+}
 
 /* ================= VUE : PANEL ADMIN ================= */
 function viewAdminPanel(){
-  const tabs = [['lecons','Leçons'],['groupes','Groupes'],['banque','Banque de procédés']];
+  const tabs = [['lecons','Leçons'],['groupes','Groupes'],['banque','Procédés'],['composantes','Composantes'],['roles','Rôles AFL3']];
   let body = '';
   if(state.adminTab==='lecons') body = adminTabLecons();
   if(state.adminTab==='groupes') body = adminTabGroupes();
   if(state.adminTab==='banque') body = adminTabBanque();
+  if(state.adminTab==='composantes') body = adminTabComposantes();
+  if(state.adminTab==='roles') body = adminTabRoles();
   return `
   <div class="tabs">
     ${tabs.map(([k,l])=>`<div class="tab ${state.adminTab===k?'active':''}" onclick="go('admin-panel',{adminTab:'${k}'})">${l}</div>`).join('')}
@@ -408,7 +447,7 @@ function adminTabLecons(){
     <div class="card" style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
       <div>
         <strong>Leçon ${l.Numero}</strong> — inducteur : <em class="display">${l.Inducteur||'(vide)'}</em>
-        <div class="muted" style="font-size:13px;">${(l.Mots||[]).length} mot(s) · procédé : ${l.Procede?l.Procede.Nom:'non choisi'}</div>
+        <div class="muted" style="font-size:13px;">${(l.Mots||[]).length} mot(s) · procédé : ${l.Procede?l.Procede.Nom:'non choisi'} · composante : ${l.Composante?l.Composante.Nom:'non choisie'}</div>
       </div>
       <div style="display:flex;gap:8px;">
         <button class="btn sm" onclick="openLeconEditor('${l.id}')">Ouvrir</button>
@@ -515,9 +554,109 @@ async function deleteProcede(id){
   await loadProcedes(); render();
 }
 
+/* ---- gestion composantes du mouvement (banque) ---- */
+function adminTabComposantes(){
+  const rows = state.composantes.map(p=>`
+    <div class="card" style="margin-bottom:12px;">
+      <div class="procede-card">
+        <div class="procede-text">
+          <h3 style="margin:0 0 6px;">${p.Nom}</h3>
+          <p class="muted" style="font-size:14px;">${p.Description||''}</p>
+        </div>
+        ${p.VideoUrl?`<div class="procede-video">${embedVideo(p.VideoUrl)}</div>`:''}
+      </div>
+      <div style="margin-top:10px; display:flex; gap:8px;">
+        <button class="btn sm" onclick="editComposante('${p.id}')">Modifier</button>
+        <button class="btn sm danger" onclick="deleteComposante('${p.id}')">Supprimer</button>
+      </div>
+    </div>`).join('') || `<p class="muted">Aucune composante dans la banque pour l'instant.</p>`;
+  return `
+  <div class="section-title"><h2 class="display" style="margin:0;">Composantes du mouvement</h2>
+  <div style="display:flex; gap:8px;">
+    <button class="btn sm" onclick="seedComposantes()">✨ Insérer les 4 classiques</button>
+    <button class="btn primary" onclick="editComposante(null)">+ Nouvelle composante</button>
+  </div></div>
+  <p class="muted" style="margin-top:-6px;">Corps, Espace, Temps, Énergie — les composantes mobilisées par le propos artistique (AFL1). Le bouton « Insérer les 4 classiques » ne crée que celles qui n'existent pas encore ; vous pouvez ensuite librement les modifier, en ajouter d'autres, ou les supprimer.</p>
+  ${rows}`;
+}
+async function seedComposantes(){
+  const defaults = [
+    {Nom:'Corps', Description:"Ce que le corps engage dans le mouvement : parties initiatrices, segments impliqués, appuis, équilibres et déséquilibres, formes corporelles (groupé, étendu, tordu, symétrique/asymétrique). C'est le \"quoi\" du mouvement.", VideoUrl:''},
+    {Nom:'Espace', Description:"Où se déplace le corps et comment il occupe l'espace scénique : niveaux (haut, mi-hauteur, sol), tracés, trajets, directions, amplitude, formes dans l'espace (arrondies, rectilignes, anguleuses), proximité ou éloignement des autres danseurs.", VideoUrl:''},
+    {Nom:'Temps', Description:"Comment le mouvement se déroule dans la durée : vitesse, tempo (régulier, syncopé, changeant), durée des séquences, rythme, accélérations et ralentis, silences et pauses.", VideoUrl:''},
+    {Nom:'Énergie', Description:"Comment le mouvement est exécuté sur le plan qualitatif : poids (fort/léger), qualité du geste (soudain/maintenu, direct/indirect), amplitude, fluidité ou saccade, tension et relâchement.", VideoUrl:''}
+  ];
+  const existants = state.composantes.map(c=>c.Nom.toLowerCase());
+  const aCreer = defaults.filter(d=>!existants.includes(d.Nom.toLowerCase()));
+  if(!aCreer.length){ toast('Les 4 composantes classiques existent déjà'); return; }
+  for(const d of aCreer) await db.collection('composantes').add(d);
+  await loadComposantes();
+  toast(aCreer.length+' composante(s) créée(s)'); render();
+}
+function editComposante(id){
+  const p = id ? state.composantes.find(x=>x.id===id) : {Nom:'',Description:'',VideoUrl:''};
+  const html = `
+  <div class="card" style="max-width:560px;margin:4vh auto;">
+    <h2 class="display" style="margin-top:0;">${id?'Modifier':'Nouvelle'} composante</h2>
+    <div class="field"><label>Nom</label><input id="cNomC" type="text" value="${p.Nom||''}" placeholder="ex : Espace, Temps, Énergie, Corps"></div>
+    <div class="field"><label>Description</label><textarea id="cDescC">${p.Description||''}</textarea></div>
+    <div class="field"><label>Lien vidéo (optionnel)</label><input id="cVidC" type="url" value="${p.VideoUrl||''}"></div>
+    <div style="display:flex; gap:10px; justify-content:flex-end;">
+      <button class="btn ghost" onclick="go('admin-panel',{adminTab:'composantes'})">Annuler</button>
+      <button class="btn primary" onclick="saveComposante('${id||''}')">Enregistrer</button>
+    </div>
+  </div>`;
+  document.getElementById('main').innerHTML = html;
+}
+async function saveComposante(id){
+  const data = {
+    Nom: document.getElementById('cNomC').value.trim(),
+    Description: document.getElementById('cDescC').value.trim(),
+    VideoUrl: document.getElementById('cVidC').value.trim()
+  };
+  if(!data.Nom){ toast('Le nom est obligatoire'); return; }
+  if(id) await db.collection('composantes').doc(id).set(data,{merge:true});
+  else await db.collection('composantes').add(data);
+  await loadComposantes();
+  toast('Composante enregistrée'); go('admin-panel',{adminTab:'composantes'});
+}
+async function deleteComposante(id){
+  if(!confirm('Supprimer cette composante de la banque ?')) return;
+  await db.collection('composantes').doc(id).delete();
+  await loadComposantes(); render();
+}
+
+/* ---- suivi des rôles AFL3 (admin) ---- */
+function adminTabRoles(){
+  const rows = state.groupes.map(g=>{
+    const membres = g.Membres||[];
+    const rolesMap = g.Roles||{};
+    return membres.map(m=>{
+      const roles = rolesMap[m]||[];
+      const nbFiches = (state.allFiches||[]).filter(f=>f.GroupeId===g.id && f.Observateur===m).length;
+      const nbNotes = (state.allNotes||[]).filter(n=>n.GroupeId===g.id && n.Coach===m).length;
+      const nbVideos = (state.allAnalyses||[]).filter(v=>v.GroupeId===g.id && v.Analyste===m).length;
+      return `<tr>
+        <td>${g.Nom}</td><td>${m}</td>
+        <td>${roles.length?roles.map(r=>`<span class="pill" style="margin-right:4px;">${r}</span>`).join(''):'<span class="muted">non choisis</span>'}</td>
+        <td>${roles.includes('Spectateur')?nbFiches+' fiche(s)':'—'}</td>
+        <td>${roles.includes('Coach')?nbNotes+' note(s)':'—'}</td>
+        <td>${roles.includes('Analyseur vidéo')?nbVideos+' analyse(s)':'—'}</td>
+      </tr>`;
+    }).join('');
+  }).join('') || `<tr><td colspan="6" class="muted">Aucun groupe pour l'instant.</td></tr>`;
+  return `
+  <div class="section-title"><h2 class="display" style="margin:0;">Rôles AFL3</h2></div>
+  <p class="muted" style="margin-top:-6px;">Chaque élève choisit 2 rôles parmi Spectateur, Coach, Analyseur vidéo. Suivi de leur production ci-dessous.</p>
+  <div class="card" style="overflow:auto;">
+  <table><thead><tr><th>Groupe</th><th>Élève</th><th>Rôles choisis</th><th>Spectateur</th><th>Coach</th><th>Analyste vidéo</th></tr></thead>
+  <tbody>${rows}</tbody></table>
+  </div>`;
+}
+
 /* ---- gestion leçons (prof) ---- */
 function openLeconEditor(id){
-  const l = id ? state.lecons.find(x=>x.id===id) : {Numero: state.lecons.length+1, Inducteur:'', Mots:[], Procede:null, phase:'recherche'};
+  const l = id ? state.lecons.find(x=>x.id===id) : {Numero: state.lecons.length+1, Inducteur:'', Mots:[], Procede:null, Composante:null, phase:'recherche'};
   state.currentLeconId = id;
   state.leconDraft = JSON.parse(JSON.stringify(l));
   state.leconDraft.phase = (state.leconDraft.Mots && state.leconDraft.Mots.length && !id) ? 'recherche' : (id ? 'bulles' : 'recherche');
@@ -536,6 +675,7 @@ function viewLessonEditor(){
   if(d.phase==='recherche') body = editorPhaseRecherche(d);
   else if(d.phase==='bulles') body = editorPhaseBulles(d);
   else if(d.phase==='procede') body = editorPhaseProcede(d);
+  else if(d.phase==='composante') body = editorPhaseComposante(d);
   return `
   <div class="section-title">
     <h2 class="display" style="margin:0;">Leçon ${d.Numero}</h2>
@@ -659,13 +799,42 @@ function editorPhaseProcede(d){
   </div>` : `<p class="muted">Aucun procédé dans la banque ? Ajoutez-en un depuis l'onglet « Banque de procédés ».</p>`}
   <div style="display:flex; justify-content:space-between; margin-top:16px;">
     <button class="btn ghost" onclick="d_setPhase('bulles')">&larr; Retour</button>
+    <button class="btn primary" onclick="d_setPhase('composante')">Choisir une composante du mouvement →</button>
+  </div>`;
+}
+
+function editorPhaseComposante(d){
+  const options = state.composantes.map(p=>`<option value="${p.id}" ${d.Composante&&d.Composante.id===p.id?'selected':''}>${p.Nom}</option>`).join('');
+  const selected = d.Composante ? state.composantes.find(p=>p.id===d.Composante.id) : null;
+  setTimeout(()=>{
+    document.getElementById('compSelect').onchange = (e)=>{
+      const p = state.composantes.find(x=>x.id===e.target.value);
+      d.Composante = p ? {id:p.id, Nom:p.Nom, Description:p.Description, VideoUrl:p.VideoUrl} : null;
+      render();
+    };
+  },0);
+  return `
+  <div class="field" style="max-width:420px;">
+    <label>Composante du mouvement travaillée</label>
+    <select id="compSelect">
+      <option value="">— choisir —</option>
+      ${options}
+    </select>
+  </div>
+  ${selected ? `
+  <div class="card procede-card">
+    <div class="procede-text"><h3 style="margin-top:0;">${selected.Nom}</h3><p class="muted">${selected.Description||''}</p></div>
+    ${selected.VideoUrl?`<div class="procede-video">${embedVideo(selected.VideoUrl)}</div>`:''}
+  </div>` : `<p class="muted">Aucune composante dans la banque ? Ajoutez-en une depuis l'onglet « Composantes ».</p>`}
+  <div style="display:flex; justify-content:space-between; margin-top:16px;">
+    <button class="btn ghost" onclick="d_setPhase('procede')">&larr; Retour</button>
     <button class="btn primary" onclick="saveLeconDraft(true)">Enregistrer la leçon</button>
   </div>`;
 }
 
 async function saveLeconDraft(finish){
   const d = state.leconDraft;
-  const data = {Numero:d.Numero, Inducteur:d.Inducteur||'', Mots:d.Mots||[], Procede:d.Procede||null, DateCreation: d.DateCreation||new Date().toISOString()};
+  const data = {Numero:d.Numero, Inducteur:d.Inducteur||'', Mots:d.Mots||[], Procede:d.Procede||null, Composante:d.Composante||null, DateCreation: d.DateCreation||new Date().toISOString()};
   if(state.currentLeconId) await db.collection('lecons').doc(state.currentLeconId).set(data,{merge:true});
   else await db.collection('lecons').add(data);
   await loadLecons();
@@ -696,7 +865,10 @@ function manageGroupe(id){
     <p><strong>Thème :</strong> ${g.Theme||'<span class="muted">non choisi</span>'}</p>
     <p><strong>Mots trouvés :</strong> ${(g.Mots||[]).join(', ')||'<span class="muted">aucun</span>'}</p>
     <p><strong>Procédés choisis :</strong> ${(g.ProcedesChoisis||[]).map(p=>p.Nom).join(', ')||'<span class="muted">aucun</span>'}</p>
+    <p><strong>Composantes choisies :</strong> ${(g.ComposantesChoisies||[]).map(p=>p.Nom).join(', ')||'<span class="muted">aucune</span>'}</p>
     <p><strong>Frise :</strong> ${(g.Frise||[]).length} élément(s) placé(s)</p>
+    <h3>Rôles AFL3</h3>
+    ${(g.Membres||[]).map(m=>`<p style="margin:4px 0;">${escapeHtml(m)} — ${((g.Roles||{})[m]||[]).join(', ')||'<span class="muted">non choisis</span>'}</p>`).join('') || '<p class="muted">Aucun membre.</p>'}
     <div style="text-align:right; margin-top:14px;">
       <button class="btn ghost" onclick="go('admin-panel',{adminTab:'groupes'})">Fermer</button>
     </div>
@@ -730,6 +902,38 @@ async function deleteGroupe(id){
 }
 
 /* ================= ESPACE ÉLÈVE ================= */
+function goAfterGroupLogin(){
+  const stored = localStorage.getItem('danse_moi_'+state.group.id);
+  Promise.all([loadFichesSpectateur(state.group.id), loadNotesCoach(state.group.id), loadAnalysesVideo(state.group.id)]).then(()=>{
+    if(stored){ state.moi = stored; go('eleve-space',{eleveTab:'historique'}); }
+    else { go('eleve-identify'); }
+  });
+}
+function viewEleveIdentify(){
+  const g = state.group;
+  const options = (g.Membres||[]).map(m=>`<option value="${escapeHtml(m)}">${escapeHtml(m)}</option>`).join('');
+  setTimeout(()=>{
+    document.getElementById('formMoi').onsubmit = (e)=>{
+      e.preventDefault();
+      const moi = document.getElementById('moiSelect').value;
+      if(!moi) return;
+      state.moi = moi;
+      localStorage.setItem('danse_moi_'+g.id, moi);
+      go('eleve-space',{eleveTab:'historique'});
+    };
+  },0);
+  return `
+  <div class="card" style="max-width:420px;margin:8vh auto;">
+    <h2 class="display" style="margin-top:0;">Qui es-tu ?</h2>
+    <p class="muted" style="font-size:13.5px;">Utile pour le choix de tes rôles AFL3 (spectateur, coach, analyste vidéo) — mémorisé sur cet ordinateur.</p>
+    <form id="formMoi">
+      <div class="field"><label>Ton prénom dans le groupe « ${g.Nom} »</label>
+        <select id="moiSelect" required><option value="">— choisir —</option>${options}</select>
+      </div>
+      <button class="btn magenta" type="submit" style="width:100%;">Continuer</button>
+    </form>
+  </div>`;
+}
 function viewEleveLogin(){
   setTimeout(()=>{
     document.getElementById('formJoin').onsubmit = async (e)=>{
@@ -743,8 +947,8 @@ function viewEleveLogin(){
       if(!doc){ err.textContent = 'Groupe ou mot de passe incorrect.'; return; }
       const g = {id:doc.id, ...doc.data()};
       state.group = g; localStorage.setItem('danse_group', JSON.stringify(g));
-      await loadLecons(); await loadProcedes();
-      go('eleve-space',{eleveTab:'historique'});
+      await loadLecons(); await loadProcedes(); await loadComposantes();
+      goAfterGroupLogin();
     };
     document.getElementById('formCreate').onsubmit = async (e)=>{
       e.preventDefault();
@@ -757,13 +961,13 @@ function viewEleveLogin(){
       if(!existing.empty){ err.textContent = 'Ce nom de groupe existe déjà.'; return; }
       const membres = membresRaw.split(',').map(s=>s.trim()).filter(Boolean);
       const pwd = genPassword();
-      const data = {Nom:nom, Membres:membres, MotDePasse:pwd, Theme:'', Mots:[], ProcedesChoisis:[], Frise:[], DateCreation:new Date().toISOString()};
+      const data = {Nom:nom, Membres:membres, MotDePasse:pwd, Theme:'', Mots:[], ProcedesChoisis:[], ComposantesChoisies:[], Roles:{}, Frise:[], DateCreation:new Date().toISOString()};
       const ref = await db.collection('groupes').add(data);
       const g = {id:ref.id, ...data};
       state.group = g; localStorage.setItem('danse_group', JSON.stringify(g));
       toast('Groupe créé — mot de passe : '+pwd);
-      await loadLecons(); await loadProcedes();
-      go('eleve-space',{eleveTab:'historique'});
+      await loadLecons(); await loadProcedes(); await loadComposantes();
+      goAfterGroupLogin();
     };
   },0);
   return `
@@ -792,12 +996,29 @@ function viewEleveLogin(){
 }
 
 function viewEleveSpace(){
-  const tabs = [['historique','Historique des leçons'],['brainstorm','Notre brainstorm'],['procedes','Nos procédés'],['frise','Frise chronologique']];
+  const g = state.group;
+  const mesRoles = (g.Roles && g.Roles[state.moi]) || [];
+  const tabs = [
+    ['historique','Historique des leçons'],
+    ['brainstorm','Notre brainstorm'],
+    ['procedes','Nos procédés'],
+    ['composantes','Composantes'],
+    ['frise','Frise chronologique'],
+    ['roles','Mes rôles'],
+  ];
+  if(mesRoles.includes('Spectateur')) tabs.push(['spectateur','Fiche spectateur']);
+  if(mesRoles.includes('Coach')) tabs.push(['coach','Carnet coach']);
+  if(mesRoles.includes('Analyseur vidéo')) tabs.push(['video','Analyse vidéo']);
   let body='';
   if(state.eleveTab==='historique') body = eleveTabHistorique();
   if(state.eleveTab==='brainstorm') body = eleveTabBrainstorm();
   if(state.eleveTab==='procedes') body = eleveTabProcedes();
+  if(state.eleveTab==='composantes') body = eleveTabComposantes();
   if(state.eleveTab==='frise') body = eleveTabFrise();
+  if(state.eleveTab==='roles') body = eleveTabRoles();
+  if(state.eleveTab==='spectateur') body = eleveTabSpectateur();
+  if(state.eleveTab==='coach') body = eleveTabCoach();
+  if(state.eleveTab==='video') body = eleveTabVideo();
   return `
   <div class="tabs">${tabs.map(([k,l])=>`<div class="tab ${state.eleveTab===k?'active':''}" onclick="go('eleve-space',{eleveTab:'${k}'})">${l}</div>`).join('')}</div>
   ${body}`;
@@ -814,6 +1035,8 @@ function eleveTabHistorique(){
       <div class="bubblefield" style="height:280px;" id="hist-${l.id}"></div>
       ${l.Procede?`<div class="pill" style="margin-top:12px;">Procédé : ${l.Procede.Nom}</div>
       <div class="procede-card" style="margin-top:10px;"><div class="procede-text"><p class="muted">${l.Procede.Description||''}</p></div>${l.Procede.VideoUrl?`<div class="procede-video">${embedVideo(l.Procede.VideoUrl)}</div>`:''}</div>`:''}
+      ${l.Composante?`<div class="pill" style="margin-top:12px; border-color:rgba(53,208,178,0.5);">Composante : ${l.Composante.Nom}</div>
+      <div class="procede-card" style="margin-top:10px;"><div class="procede-text"><p class="muted">${l.Composante.Description||''}</p></div>${l.Composante.VideoUrl?`<div class="procede-video">${embedVideo(l.Composante.VideoUrl)}</div>`:''}</div>`:''}
     </div>`).join('');
 }
 
@@ -881,6 +1104,218 @@ async function toggleProcede(id){
   if(idx>=0) g.ProcedesChoisis.splice(idx,1);
   else g.ProcedesChoisis.push({id:p.id, Nom:p.Nom});
   await saveGroupe({ProcedesChoisis:g.ProcedesChoisis});
+  render();
+}
+
+function eleveTabComposantes(){
+  const g = state.group;
+  const chosenIds = (g.ComposantesChoisies||[]).map(p=>p.id);
+  const cards = state.composantes.map(p=>{
+    const on = chosenIds.includes(p.id);
+    return `<div class="card procede-card" style="border-color:${on?'var(--teal)':'var(--line)'};">
+      <div class="procede-text">
+        <h3 style="margin-top:0;">${p.Nom}</h3>
+        <p class="muted">${p.Description||''}</p>
+        <button class="btn sm ${on?'teal':''}" onclick="toggleComposante('${p.id}')">${on?'✓ Sélectionnée':'Choisir'}</button>
+      </div>
+      ${p.VideoUrl?`<div class="procede-video">${embedVideo(p.VideoUrl)}</div>`:''}
+    </div>`;
+  }).join('') || '<p class="muted">La banque de composantes est vide pour le moment (le prof doit d\'abord la remplir).</p>';
+  return `<p class="muted">Choisissez les composantes du mouvement (Corps, Espace, Temps, Énergie) que votre chorégraphie exploite.</p><div class="grid cols-2">${cards}</div>`;
+}
+async function toggleComposante(id){
+  const g = state.group;
+  const p = state.composantes.find(x=>x.id===id);
+  g.ComposantesChoisies = g.ComposantesChoisies||[];
+  const idx = g.ComposantesChoisies.findIndex(x=>x.id===id);
+  if(idx>=0) g.ComposantesChoisies.splice(idx,1);
+  else g.ComposantesChoisies.push({id:p.id, Nom:p.Nom});
+  await saveGroupe({ComposantesChoisies:g.ComposantesChoisies});
+  render();
+}
+
+/* ---- Mes rôles (AFL3) ---- */
+function eleveTabRoles(){
+  const g = state.group;
+  const rolesMap = g.Roles||{};
+  const mesRoles = rolesMap[state.moi]||[];
+  setTimeout(()=>{
+    document.querySelectorAll('.role-check').forEach(cb=>{
+      cb.onchange = async ()=>{
+        const checked = Array.from(document.querySelectorAll('.role-check:checked')).map(x=>x.value);
+        if(checked.length > 2){ cb.checked = false; toast('Maximum 2 rôles.'); return; }
+        rolesMap[state.moi] = checked;
+        await saveGroupe({Roles:rolesMap});
+        render();
+      };
+    });
+  },0);
+  const autres = (g.Membres||[]).filter(m=>m!==state.moi);
+  return `
+  <div class="card" style="max-width:520px;">
+    <h3 style="margin-top:0;">Mes 2 rôles (AFL3)</h3>
+    <p class="muted" style="font-size:13.5px;">Choisis 2 rôles parmi les 3 — ils déterminent les outils qui apparaissent dans tes onglets.</p>
+    ${ROLES.map(r=>`
+      <label style="display:flex; align-items:center; gap:10px; padding:8px 0; border-bottom:1px solid var(--line);">
+        <input type="checkbox" class="role-check" value="${r}" ${mesRoles.includes(r)?'checked':''} style="width:18px;height:18px;">
+        <span>${r}</span>
+      </label>`).join('')}
+  </div>
+  <div class="card" style="max-width:520px; margin-top:16px;">
+    <h4 style="margin-top:0;">Le reste du groupe</h4>
+    ${autres.length ? autres.map(m=>`<p style="margin:4px 0;">${escapeHtml(m)} — ${(rolesMap[m]||[]).length ? rolesMap[m].join(', ') : '<span class="muted">pas encore choisi</span>'}</p>`).join('') : '<p class="muted">Tu es seul(e) dans ce groupe pour l\'instant.</p>'}
+  </div>`;
+}
+
+/* ---- Outil Spectateur : fiche numérique ---- */
+function eleveTabSpectateur(){
+  const g = state.group;
+  const mesFiches = (state.fichesSpectateur||[]).filter(f=>f.Observateur===state.moi);
+  setTimeout(()=>{
+    const form = document.getElementById('formSpectateur');
+    if(form) form.onsubmit = async (e)=>{
+      e.preventDefault();
+      const fd = new FormData(form);
+      const data = {GroupeId:g.id, Observateur:state.moi, DateCreation:new Date().toISOString()};
+      for(const [k,v] of fd.entries()) data[k]=v;
+      await db.collection('fichesSpectateur').add(data);
+      await loadFichesSpectateur(g.id);
+      toast('Fiche enregistrée'); render();
+    };
+  },0);
+  const radioRow = (name,label,opts)=>`
+    <div class="field"><label>${label}</label>
+    <div style="display:flex; gap:14px; flex-wrap:wrap;">
+      ${opts.map(o=>`<label style="display:flex; gap:6px; align-items:center; font-weight:400; color:var(--text); font-size:14px;"><input type="radio" name="${name}" value="${o}"> ${o}</label>`).join('')}
+    </div></div>`;
+  return `
+  <div class="card" style="max-width:640px;">
+    <h3 style="margin-top:0;">Nouvelle fiche spectateur</h3>
+    <form id="formSpectateur">
+      <div class="field"><label>Chorégraphie observée</label><input type="text" name="Choregraphie" placeholder="Nom du groupe observé" required></div>
+      <h4>Espace</h4>
+      ${radioRow('Niveaux','Niveaux (espace corporel)',['Hauts','Mi-hauteur','Sol'])}
+      ${radioRow('Tracés','Tracés',['Précis','Inégaux','Imprécis'])}
+      ${radioRow('Formes','Formes',['Arrondies','Rectilignes','Anguleuses'])}
+      ${radioRow('Amplitude','Amplitude des formes',['Grande','Intermédiaire','Petite'])}
+      ${radioRow('Poids','Poids',['Ferme','Léger','Mou','Dur'])}
+      ${radioRow('Trajets','Trajets (espace de déplacement)',['Lointains','Mi-distance','Proches'])}
+      ${radioRow('Directions','Directions',['Lisibles','Imprécises','Illisibles'])}
+      <h4>Temps</h4>
+      ${radioRow('Tempo','Tempo',['Suivi','Inégal','Perdu'])}
+      ${radioRow('Regularite','Régularité',['Régulier','Contretemps','Changeant'])}
+      ${radioRow('Vitesse','Vitesse',['Rapide','Medium','Lent'])}
+      <h4>Énergie</h4>
+      ${radioRow('Geste','Geste',['Soudain','Maintenu'])}
+      ${radioRow('EspaceEnergie','Espace (qualité)',['Direct','Indirect'])}
+      ${radioRow('AmplitudeMvt','Amplitude du mouvement',['Tout à fait','Inégale','Absente'])}
+      <h4>Thème</h4>
+      ${radioRow('Lisibilite','Lisibilité du thème',['Lisibles','Imprécises','Illisibles'])}
+      ${radioRow('Coherence','Cohérence danse / thème',['Tout à fait','Inégale','Absente'])}
+      <div class="field"><label>Commentaires sur l'émotion ressentie</label><textarea name="Commentaire" placeholder="Deux ou trois moments où tu as ressenti une émotion (ou une non émotion)..."></textarea></div>
+      <button class="btn magenta" type="submit">Enregistrer la fiche</button>
+    </form>
+  </div>
+  <h3 style="margin:22px 0 10px;">Mes fiches (${mesFiches.length})</h3>
+  ${mesFiches.length ? mesFiches.map(f=>`
+    <div class="card" style="margin-bottom:10px;">
+      <strong>${escapeHtml(f.Choregraphie||'')}</strong> <span class="muted" style="font-size:12px;">${new Date(f.DateCreation).toLocaleDateString('fr-FR')}</span>
+      ${f.Commentaire?`<p class="muted" style="margin-top:8px;">${escapeHtml(f.Commentaire)}</p>`:''}
+    </div>`).join('') : '<p class="muted">Aucune fiche enregistrée pour l\'instant.</p>'}`;
+}
+
+/* ---- Outil Coach : carnet de suivi ---- */
+function eleveTabCoach(){
+  const g = state.group;
+  const mesNotes = (state.notesCoach||[]).filter(n=>n.Coach===state.moi);
+  setTimeout(()=>{
+    const form = document.getElementById('formCoach');
+    if(form) form.onsubmit = async (e)=>{
+      e.preventDefault();
+      const partenaire = document.getElementById('coachPartenaire').value.trim();
+      const difficulte = document.getElementById('coachDifficulte').value.trim();
+      const conseil = document.getElementById('coachConseil').value.trim();
+      if(!partenaire){ toast('Indique le partenaire suivi'); return; }
+      await db.collection('notesCoach').add({GroupeId:g.id, Coach:state.moi, Partenaire:partenaire, Difficulte:difficulte, Conseil:conseil, DateCreation:new Date().toISOString()});
+      await loadNotesCoach(g.id);
+      form.reset(); toast('Note ajoutée'); render();
+    };
+  },0);
+  return `
+  <div class="card" style="max-width:520px;">
+    <h3 style="margin-top:0;">Nouvelle note de coaching</h3>
+    <form id="formCoach">
+      <div class="field"><label>Partenaire suivi</label><input id="coachPartenaire" type="text" placeholder="Prénom" required></div>
+      <div class="field"><label>Difficulté repérée</label><textarea id="coachDifficulte" placeholder="Ce que tu observes..."></textarea></div>
+      <div class="field"><label>Conseil donné</label><textarea id="coachConseil" placeholder="Ce que tu lui as conseillé..."></textarea></div>
+      <button class="btn magenta" type="submit">Ajouter</button>
+    </form>
+  </div>
+  <h3 style="margin:22px 0 10px;">Mon carnet (${mesNotes.length})</h3>
+  ${mesNotes.length ? mesNotes.map(n=>`
+    <div class="card" style="margin-bottom:10px;">
+      <strong>${escapeHtml(n.Partenaire)}</strong> <span class="muted" style="font-size:12px;">${new Date(n.DateCreation).toLocaleDateString('fr-FR')}</span>
+      ${n.Difficulte?`<p class="muted" style="margin-top:6px;">🔎 ${escapeHtml(n.Difficulte)}</p>`:''}
+      ${n.Conseil?`<p class="muted">💬 ${escapeHtml(n.Conseil)}</p>`:''}
+    </div>`).join('') : '<p class="muted">Aucune note pour l\'instant.</p>'}`;
+}
+
+/* ---- Outil Analyseur vidéo : filmer / uploader + notes horodatées ---- */
+function eleveTabVideo(){
+  const g = state.group;
+  const mesAnalyses = (state.analysesVideo||[]).filter(v=>v.Analyste===state.moi);
+  setTimeout(()=>{
+    const input = document.getElementById('videoFile');
+    if(input) input.onchange = async ()=>{
+      const file = input.files[0];
+      if(!file) return;
+      if(!storage){ toast('Firebase Storage indisponible'); return; }
+      const status = document.getElementById('uploadStatus');
+      status.textContent = 'Envoi en cours…';
+      try{
+        const path = `analyses/${g.id}/${state.moi}_${Date.now()}_${file.name}`;
+        const ref = storage.ref().child(path);
+        await ref.put(file);
+        const url = await ref.getDownloadURL();
+        await db.collection('analysesVideo').add({GroupeId:g.id, Analyste:state.moi, VideoUrl:url, VideoNom:file.name, Notes:[], DateCreation:new Date().toISOString()});
+        await loadAnalysesVideo(g.id);
+        status.textContent = ''; toast('Vidéo envoyée'); render();
+      }catch(err){
+        status.textContent = 'Échec de l\'envoi : ' + (err.message||err);
+      }
+    };
+  },0);
+  return `
+  <div class="card" style="max-width:520px;">
+    <h3 style="margin-top:0;">Filmer / envoyer une séquence</h3>
+    <p class="muted" style="font-size:13.5px;">Sur tablette, ceci ouvre directement l'appareil photo pour filmer. Sur ordinateur, choisis un fichier vidéo déjà enregistré.</p>
+    <input id="videoFile" type="file" accept="video/*" capture="environment">
+    <p id="uploadStatus" class="muted" style="font-size:13px;min-height:18px;"></p>
+  </div>
+  <h3 style="margin:22px 0 10px;">Mes analyses (${mesAnalyses.length})</h3>
+  ${mesAnalyses.length ? mesAnalyses.map(v=>videoAnalysisCard(v)).join('') : '<p class="muted">Aucune vidéo envoyée pour l\'instant.</p>'}`;
+}
+function videoAnalysisCard(v){
+  return `
+  <div class="card" style="margin-bottom:16px;">
+    <video controls src="${v.VideoUrl}" style="width:100%; border-radius:10px; max-height:340px;"></video>
+    <p class="muted" style="font-size:12.5px; margin:8px 0 4px;">${escapeHtml(v.VideoNom||'')}</p>
+    <div style="display:flex; gap:8px; margin:10px 0;">
+      <input type="text" id="time-${v.id}" placeholder="0:45" style="max-width:90px;">
+      <input type="text" id="note-${v.id}" placeholder="Observation à ce moment…">
+      <button class="btn sm primary" onclick="addVideoNote('${v.id}')">Ajouter</button>
+    </div>
+    ${(v.Notes||[]).map(n=>`<div class="pill" style="margin:3px 4px 3px 0;">⏱ ${escapeHtml(n.time)} — ${escapeHtml(n.texte)}</div>`).join('')}
+  </div>`;
+}
+async function addVideoNote(id){
+  const time = document.getElementById('time-'+id).value.trim();
+  const texte = document.getElementById('note-'+id).value.trim();
+  if(!time || !texte) return;
+  const v = state.analysesVideo.find(x=>x.id===id);
+  v.Notes = v.Notes||[];
+  v.Notes.push({time, texte});
+  await db.collection('analysesVideo').doc(id).set({Notes:v.Notes},{merge:true});
   render();
 }
 
@@ -1017,6 +1452,7 @@ function render(){
     case 'admin-panel': html = viewAdminPanel(); break;
     case 'lesson-editor': html = viewLessonEditor(); break;
     case 'eleve-login': html = viewEleveLogin(); break;
+    case 'eleve-identify': html = viewEleveIdentify(); break;
     case 'eleve-space': html = viewEleveSpace(); break;
     default: html = viewHome();
   }
@@ -1029,11 +1465,12 @@ if(firebaseReady && auth){
   auth.onAuthStateChanged(async (user)=>{
     if(user){
       state.adminUser = user.email;
-      await loadLecons(); await loadProcedes(); await loadGroupes();
+      await loadLecons(); await loadProcedes(); await loadComposantes(); await loadGroupes(); state.allFiches = await loadAllFichesSpectateur(); state.allNotes = await loadAllNotesCoach(); state.allAnalyses = await loadAllAnalysesVideo();
       if(state.view==='home' || state.view==='admin-login') go('admin-panel');
     } else if(state.group){
-      await loadLecons(); await loadProcedes();
-      if(state.view==='home') go('eleve-space');
+      await loadLecons(); await loadProcedes(); await loadComposantes();
+      await loadFichesSpectateur(state.group.id); await loadNotesCoach(state.group.id); await loadAnalysesVideo(state.group.id);
+      if(state.view==='home'){ state.moi ? go('eleve-space') : go('eleve-identify'); }
       else render();
     } else {
       render();

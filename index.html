@@ -904,10 +904,12 @@ async function deleteGroupe(id){
 /* ================= ESPACE ÉLÈVE ================= */
 function goAfterGroupLogin(){
   const stored = localStorage.getItem('danse_moi_'+state.group.id);
-  Promise.all([loadFichesSpectateur(state.group.id), loadNotesCoach(state.group.id), loadAnalysesVideo(state.group.id)]).then(()=>{
-    if(stored){ state.moi = stored; go('eleve-space',{eleveTab:'historique'}); }
-    else { go('eleve-identify'); }
-  });
+  Promise.all([loadFichesSpectateur(state.group.id), loadNotesCoach(state.group.id), loadAnalysesVideo(state.group.id)])
+    .catch(err=>{ console.error('Erreur chargement rôles :', err); toast('Certaines données n\'ont pas pu être chargées'); })
+    .then(()=>{
+      if(stored){ state.moi = stored; go('eleve-space',{eleveTab:'historique'}); }
+      else { go('eleve-identify'); }
+    });
 }
 function viewEleveIdentify(){
   const g = state.group;
@@ -1463,16 +1465,23 @@ function render(){
 /* ---------------- démarrage ---------------- */
 if(firebaseReady && auth){
   auth.onAuthStateChanged(async (user)=>{
-    if(user){
-      state.adminUser = user.email;
-      await loadLecons(); await loadProcedes(); await loadComposantes(); await loadGroupes(); state.allFiches = await loadAllFichesSpectateur(); state.allNotes = await loadAllNotesCoach(); state.allAnalyses = await loadAllAnalysesVideo();
-      if(state.view==='home' || state.view==='admin-login') go('admin-panel');
-    } else if(state.group){
-      await loadLecons(); await loadProcedes(); await loadComposantes();
-      await loadFichesSpectateur(state.group.id); await loadNotesCoach(state.group.id); await loadAnalysesVideo(state.group.id);
-      if(state.view==='home'){ state.moi ? go('eleve-space') : go('eleve-identify'); }
-      else render();
-    } else {
+    try{
+      if(user){
+        state.adminUser = user.email;
+        await loadLecons(); await loadProcedes(); await loadComposantes(); await loadGroupes();
+        state.allFiches = await loadAllFichesSpectateur(); state.allNotes = await loadAllNotesCoach(); state.allAnalyses = await loadAllAnalysesVideo();
+        if(state.view==='home' || state.view==='admin-login') go('admin-panel');
+      } else if(state.group){
+        await loadLecons(); await loadProcedes(); await loadComposantes();
+        await loadFichesSpectateur(state.group.id); await loadNotesCoach(state.group.id); await loadAnalysesVideo(state.group.id);
+        if(state.view==='home'){ state.moi ? go('eleve-space') : go('eleve-identify'); }
+        else render();
+      } else {
+        render();
+      }
+    }catch(err){
+      console.error('Erreur au démarrage :', err);
+      toast('Erreur de chargement : ' + (err.message||err));
       render();
     }
   });

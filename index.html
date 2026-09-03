@@ -109,7 +109,7 @@ body.offline .offline-flag{display:inline-block;}
 /* ---------- bubble field (inducteur + mots) ---------- */
 .bubblefield-wrap{margin-bottom:18px;}
 .bubblefield{
-  position:relative; height:min(58vh, 480px); border:1px dashed var(--line); border-radius:var(--radius);
+  position:relative; height:min(70vh, 600px); border:1px dashed var(--line); border-radius:var(--radius);
   overflow:hidden; background:
     radial-gradient(circle at 50% 50%, rgba(244,240,234,0.05), transparent 60%);
 }
@@ -157,8 +157,9 @@ body.offline .offline-flag{display:inline-block;}
 }
 .chip.type-mot{border-color:rgba(244,240,234,0.25);}
 .chip.type-procede{background:rgba(53,208,178,0.15); border-color:rgba(53,208,178,0.5);}
+.chip.type-composante{background:rgba(139,124,246,0.15); border-color:rgba(139,124,246,0.55);}
 .timeline{
-  position:relative; height:330px; border:1px solid var(--line); border-radius:var(--radius);
+  position:relative; height:438px; border:1px solid var(--line); border-radius:var(--radius);
   padding:0 80px;
   background:
     repeating-linear-gradient(90deg, rgba(244,240,234,0.05) 0 1px, transparent 1px 10%),
@@ -182,6 +183,7 @@ body.offline .offline-flag{display:inline-block;}
 }
 .timeline-chip.type-mot{background:var(--bg-panel-2); border:1px solid rgba(244,240,234,0.3);}
 .timeline-chip.type-procede{background:rgba(53,208,178,0.9); color:#08221c; font-weight:700;}
+.timeline-chip.type-composante{background:rgba(139,124,246,0.9); color:#150c33; font-weight:700;}
 .timeline-chip .rm{cursor:pointer; opacity:.6; font-weight:800;}
 .timeline-chip .rm:hover{opacity:1;}
 .timeline-chip.type-note{
@@ -714,13 +716,21 @@ function d_setPhase(p){ state.leconDraft.phase = p; render(); }
 
 function renderBubbleField(){
   const d = state.leconDraft;
-  renderBubbles('bubbleField', d.Inducteur, d.Mots||[], i=>{ d.Mots.splice(i,1); renderBubbleField(); });
+  d.MotsPos = d.MotsPos || {};
+  renderBubbles('bubbleField', d.Inducteur, d.Mots||[],
+    i=>{ d.Mots.splice(i,1); renderBubbleField(); },
+    d.MotsPos,
+    (mot,x,y)=>{ d.MotsPos[mot] = {x,y}; renderBubbleField(); }
+  );
 }
 
-// Placement en spirale avec évitement de collision : chaque mot cherche
-// la première position libre en s'éloignant progressivement du centre.
-// onRemove(index) optionnel : si fourni, affiche un bouton ✕ sur chaque bulle-mot.
-function renderBubbles(elId, inducteur, mots, onRemove){
+// Placement en spirale avec évitement de collision : chaque mot cherche la
+// première position libre en s'éloignant progressivement du centre — sauf si
+// une position manuelle existe déjà (posMap), auquel cas on la respecte telle
+// quelle (l'élève/le prof a fait glisser la bulle à cet endroit).
+// onRemove(index) optionnel : bouton ✕ sur chaque bulle-mot.
+// posMap + onMove(mot,x,y) optionnels : rend chaque bulle-mot déplaçable à la souris.
+function renderBubbles(elId, inducteur, mots, onRemove, posMap, onMove){
   const el = document.getElementById(elId);
   if(!el) return;
   const w = el.clientWidth, h = el.clientHeight;
@@ -730,25 +740,37 @@ function renderBubbles(elId, inducteur, mots, onRemove){
   let html = `<div class="bubble inducteur" style="left:${cx-rInd}px; top:${cy-rInd}px;">${escapeHtml(inducteur||'…')}</div>`;
   (mots||[]).forEach((mot,i)=>{
     const r = 48;
-    let angle = i * 137.5 * Math.PI/180;
-    let radius = rInd + 55;
-    let x=cx, y=cy, ok=false, tries=0;
-    while(!ok && tries<80){
-      x = cx + Math.cos(angle)*radius;
-      y = cy + Math.sin(angle)*radius;
-      ok = placed.every(p=>{
-        const dx=x-p.x, dy=y-p.y;
-        return Math.sqrt(dx*dx+dy*dy) >= (p.r + r + 8);
-      });
-      if(!ok){ radius += 12; angle += 0.34; }
-      tries++;
+    let x, y;
+    const manual = posMap && posMap[mot];
+    if(manual){
+      x = Math.max(r, Math.min(w-r, manual.x));
+      y = Math.max(r, Math.min(h-r, manual.y));
+    } else {
+      let angle = i * 137.5 * Math.PI/180;
+      let radius = rInd + 55;
+      let ok=false, tries=0;
+      x=cx; y=cy;
+      while(!ok && tries<150){
+        const rawX = cx + Math.cos(angle)*radius;
+        const rawY = cy + Math.sin(angle)*radius;
+        const cx2 = Math.max(r, Math.min(w-r, rawX));
+        const cy2 = Math.max(r, Math.min(h-r, rawY));
+        ok = placed.every(p=>{
+          const dx=cx2-p.x, dy=cy2-p.y;
+          return Math.sqrt(dx*dx+dy*dy) >= (p.r + r + 8);
+        });
+        if(ok){ x = cx2; y = cy2; }
+        else { radius += 12; angle += 0.34; }
+        tries++;
+      }
+      x = Math.max(r, Math.min(w-r, x));
+      y = Math.max(r, Math.min(h-r, y));
     }
-    x = Math.max(r, Math.min(w-r, x));
-    y = Math.max(r, Math.min(h-r, y));
     placed.push({x, y, r});
     const dx = (Math.random()*8-4).toFixed(1), dy=(Math.random()*8-4).toFixed(1);
     const dur = (5+Math.random()*4).toFixed(1);
-    html += `<div class="bubble mot" data-idx="${i}" style="left:${x-r}px; top:${y-r}px; --dx:${dx}px; --dy:${dy}px; animation-duration:${dur}s;">${escapeHtml(mot)}${onRemove?'<span class="bubble-rm">✕</span>':''}</div>`;
+    const draggableAttr = onMove ? 'draggable="true"' : '';
+    html += `<div class="bubble mot" data-idx="${i}" ${draggableAttr} style="left:${x-r}px; top:${y-r}px; --dx:${dx}px; --dy:${dy}px; animation-duration:${dur}s; ${onMove?'cursor:grab;':''}">${escapeHtml(mot)}${onRemove?'<span class="bubble-rm">✕</span>':''}</div>`;
   });
   el.innerHTML = html;
   if(onRemove){
@@ -758,6 +780,27 @@ function renderBubbles(elId, inducteur, mots, onRemove){
         onRemove(parseInt(b.dataset.idx,10));
       });
     });
+  }
+  if(onMove){
+    const bubbleEls = el.querySelectorAll('.bubble.mot');
+    bubbleEls.forEach(b=>{
+      b.addEventListener('dragstart', e=>{
+        e.dataTransfer.setData('text/plain', b.dataset.idx);
+        e.dataTransfer.effectAllowed = 'move';
+      });
+    });
+    el.ondragover = e=>e.preventDefault();
+    el.ondrop = e=>{
+      e.preventDefault();
+      const idx = parseInt(e.dataTransfer.getData('text/plain'),10);
+      if(isNaN(idx)) return;
+      const mot = (mots||[])[idx];
+      if(mot===undefined) return;
+      const rect = el.getBoundingClientRect();
+      const x = e.clientX - rect.left;
+      const y = e.clientY - rect.top;
+      onMove(mot, x, y);
+    };
   }
 }
 
@@ -862,8 +905,8 @@ function manageGroupe(id){
     <hr style="border:none; border-top:1px solid var(--line); margin:18px 0;">
     <p><strong>Thème :</strong> ${g.Theme||'<span class="muted">non choisi</span>'}</p>
     <p><strong>Mots trouvés :</strong> ${(g.Mots||[]).join(', ')||'<span class="muted">aucun</span>'}</p>
-    <p><strong>Procédés choisis :</strong> ${(g.ProcedesChoisis||[]).map(p=>p.Nom).join(', ')||'<span class="muted">aucun</span>'}</p>
-    <p><strong>Composantes choisies :</strong> ${(g.ComposantesChoisies||[]).map(p=>p.Nom).join(', ')||'<span class="muted">aucune</span>'}</p>
+    <p><strong>Procédés choisis :</strong> ${(g.ProcedesChoisis||[]).filter(p=>state.procedes.some(x=>x.id===p.id)).map(p=>p.Nom).join(', ')||'<span class="muted">aucun</span>'}</p>
+    <p><strong>Composantes choisies :</strong> ${(g.ComposantesChoisies||[]).filter(c=>state.composantes.some(x=>x.id===c.id)).map(p=>p.Nom).join(', ')||'<span class="muted">aucune</span>'}</p>
     <p><strong>Frise :</strong> ${(g.Frise||[]).length} élément(s) placé(s)</p>
     <h3>Rôles AFL3</h3>
     ${(g.Membres||[]).map(m=>`<p style="margin:4px 0;">${escapeHtml(m)} — ${((g.Roles||{})[m]||[]).join(', ')||'<span class="muted">non choisis</span>'}</p>`).join('') || '<p class="muted">Aucun membre.</p>'}
@@ -1075,12 +1118,35 @@ function eleveTabBrainstorm(){
 }
 function renderBubbleFieldGroupe(){
   const g = state.group;
-  renderBubbles('bubbleFieldG', g.Theme, g.Mots||[], i=>{
-    g.Mots.splice(i,1); saveGroupe({Mots:g.Mots}); renderBubbleFieldGroupe();
-  });
+  g.MotsPos = g.MotsPos || {};
+  renderBubbles('bubbleFieldG', g.Theme, g.Mots||[],
+    i=>{ g.Mots.splice(i,1); saveGroupe({Mots:g.Mots}); renderBubbleFieldGroupe(); },
+    g.MotsPos,
+    (mot,x,y)=>{ g.MotsPos[mot] = {x,y}; saveGroupe({MotsPos:g.MotsPos}); renderBubbleFieldGroupe(); }
+  );
+}
+
+// Si le prof a supprimé un procédé ou une composante de la banque après qu'un
+// groupe l'a choisi, la copie figée dans le groupe ne se met jamais à jour
+// toute seule. On la retire dès qu'un élève rouvre l'onglet concerné.
+function pruneStaleChoices(){
+  const g = state.group;
+  let changed = false;
+  if(g.ProcedesChoisis && g.ProcedesChoisis.length){
+    const filtered = g.ProcedesChoisis.filter(p=>state.procedes.some(x=>x.id===p.id));
+    if(filtered.length !== g.ProcedesChoisis.length){ g.ProcedesChoisis = filtered; changed = true; }
+  }
+  if(g.ComposantesChoisies && g.ComposantesChoisies.length){
+    const filtered = g.ComposantesChoisies.filter(c=>state.composantes.some(x=>x.id===c.id));
+    if(filtered.length !== g.ComposantesChoisies.length){ g.ComposantesChoisies = filtered; changed = true; }
+  }
+  if(changed){
+    saveGroupe({ProcedesChoisis:g.ProcedesChoisis||[], ComposantesChoisies:g.ComposantesChoisies||[]});
+  }
 }
 
 function eleveTabProcedes(){
+  pruneStaleChoices();
   const g = state.group;
   const chosenIds = (g.ProcedesChoisis||[]).map(p=>p.id);
   const cards = state.procedes.map(p=>{
@@ -1108,6 +1174,7 @@ async function toggleProcede(id){
 }
 
 function eleveTabComposantes(){
+  pruneStaleChoices();
   const g = state.group;
   const chosenIds = (g.ComposantesChoisies||[]).map(p=>p.id);
   const cards = state.composantes.map(p=>{
@@ -1140,13 +1207,20 @@ function eleveTabRoles(){
   const rolesMap = g.Roles||{};
   const mesRoles = rolesMap[state.moi]||[];
   setTimeout(()=>{
+    // Chaîne partagée entre les deux cases : si l'élève coche les 2 rôles
+    // rapidement, la deuxième sauvegarde doit attendre la fin de la première
+    // au lieu de s'exécuter en parallèle (sinon la plus lente écrase l'autre
+    // et un des deux rôles disparaît).
+    let saveChain = Promise.resolve();
     document.querySelectorAll('.role-check').forEach(cb=>{
-      cb.onchange = async ()=>{
-        const checked = Array.from(document.querySelectorAll('.role-check:checked')).map(x=>x.value);
-        if(checked.length > 2){ cb.checked = false; toast('Maximum 2 rôles.'); return; }
-        rolesMap[state.moi] = checked;
-        await saveGroupe({Roles:rolesMap});
-        render();
+      cb.onchange = ()=>{
+        saveChain = saveChain.then(async ()=>{
+          const checked = Array.from(document.querySelectorAll('.role-check:checked')).map(x=>x.value);
+          if(checked.length > 2){ cb.checked = false; toast('Maximum 2 rôles.'); return; }
+          rolesMap[state.moi] = checked;
+          await saveGroupe({Roles:rolesMap});
+          render();
+        });
       };
     });
   },0);
@@ -1322,10 +1396,12 @@ async function addVideoNote(id){
 }
 
 function eleveTabFrise(){
+  pruneStaleChoices();
   const g = state.group;
   const tokens = [
     ...(g.Mots||[]).map(m=>({type:'mot', texte:m})),
-    ...(g.ProcedesChoisis||[]).map(p=>({type:'procede', texte:p.Nom}))
+    ...(g.ProcedesChoisis||[]).map(p=>({type:'procede', texte:p.Nom})),
+    ...(g.ComposantesChoisies||[]).map(c=>({type:'composante', texte:c.Nom}))
   ];
   function posFromEvent(e, rect){
     const innerW = rect.width - 160;
@@ -1370,7 +1446,7 @@ function eleveTabFrise(){
       if(e.target.closest('.timeline-chip')) return;
       const rect = tl.getBoundingClientRect();
       const laneIdx = Math.floor((e.clientY - rect.top) / 108);
-      if(laneIdx !== 2){ toast('Double-cliquez sur la ligne « Notes » pour ajouter une note libre'); return; }
+      if(laneIdx !== 3){ toast('Double-cliquez sur la ligne « Notes » pour ajouter une note libre'); return; }
       const pos = posFromEvent(e, rect);
       g.Frise = g.Frise||[];
       g.Frise.push({id:uid(), type:'note', texte:'', pos});
@@ -1378,10 +1454,10 @@ function eleveTabFrise(){
     });
   },0);
   const chipLeft = pos => `calc(80px + (100% - 160px) * ${(pos/100).toFixed(4)})`;
-  // Trois couloirs fixes (Mots / Procédés / Notes) ; à l'intérieur d'un couloir,
-  // les éléments trop proches dans le temps se décalent automatiquement pour ne
-  // jamais se chevaucher.
-  const LANES = [{type:'mot', label:'Mots'}, {type:'procede', label:'Procédés'}, {type:'note', label:'Notes'}];
+  // Quatre couloirs fixes (Mots / Procédés / Composantes / Notes) ; à l'intérieur
+  // d'un couloir, les éléments trop proches dans le temps se décalent
+  // automatiquement pour ne jamais se chevaucher.
+  const LANES = [{type:'mot', label:'Mots'}, {type:'procede', label:'Procédés'}, {type:'composante', label:'Composantes'}, {type:'note', label:'Notes'}];
   const laneH = 108, subH = 32, subCount = 3;
   const positioned = [];
   LANES.forEach((lane, laneIdx)=>{
@@ -1417,7 +1493,7 @@ function eleveTabFrise(){
       </div>`;
     }).join('')}
   </div>
-  <p class="timeline-add-hint">💡 Chaque type d'élément a sa propre ligne (Mots / Procédés / Notes). Double-cliquez sur la ligne « Notes » pour ajouter une note libre à un endroit précis.</p>`;
+  <p class="timeline-add-hint">💡 Chaque type d'élément a sa propre ligne (Mots / Procédés / Composantes / Notes). Double-cliquez sur la ligne « Notes » pour ajouter une note libre à un endroit précis.</p>`;
 }
 async function updateNoteText(id, val){
   const g = state.group;

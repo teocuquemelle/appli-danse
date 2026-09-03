@@ -1,5 +1,5 @@
 // ⚠️ Incrémenter ce numéro à chaque mise à jour de index.html
-const CACHE_VERSION = "danse-v17";
+const CACHE_VERSION = "danse-v19";
 
 const APP_SHELL = [
   "./",

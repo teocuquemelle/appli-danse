@@ -109,36 +109,34 @@ body.offline .offline-flag{display:inline-block;}
 /* ---------- bubble field (inducteur + mots) ---------- */
 .bubblefield-wrap{margin-bottom:18px;}
 .bubblefield{
-  position:relative; height:min(70vh, 600px); border:1px dashed var(--line); border-radius:var(--radius);
-  overflow:hidden; background:
-    radial-gradient(circle at 50% 50%, rgba(244,240,234,0.05), transparent 60%);
+  min-height:min(60vh, 460px); border:1px dashed var(--line); border-radius:var(--radius);
+  background: radial-gradient(circle at 50% 0%, rgba(244,240,234,0.05), transparent 60%);
+  display:flex; flex-direction:column; align-items:center; gap:26px; padding:32px 24px;
 }
-.bubble{
-  position:absolute; border-radius:50%; display:flex; align-items:center; justify-content:center;
-  text-align:center; font-family:'Fraunces',serif; font-style:italic; font-weight:600; padding:6px;
-  animation:drift 7s ease-in-out infinite; user-select:none;
+.bubble-inducteur-hero{
+  border-radius:999px; background:var(--magenta); color:#22081a; font-family:'Fraunces',serif;
+  font-style:italic; font-weight:600; font-size:22px; padding:22px 40px; text-align:center;
+  box-shadow:0 0 40px rgba(232,80,143,0.45); max-width:90%;
+}
+.mots-wrap{display:flex; flex-wrap:wrap; gap:12px; justify-content:center; align-content:flex-start;}
+.mot-chip{
+  display:inline-flex; align-items:center; gap:8px; position:relative;
+  background:var(--bg-panel-2); border:1px solid var(--line); color:var(--text);
+  font-family:'Fraunces',serif; font-style:italic; font-weight:600; font-size:14.5px;
+  padding:10px 18px 10px 18px; border-radius:999px; animation:drift 7s ease-in-out infinite; user-select:none;
 }
 @keyframes drift{
   0%,100%{transform:translate(0,0);}
-  50%{transform:translate(var(--dx,4px), var(--dy,-6px));}
+  50%{transform:translate(var(--dx,3px), var(--dy,-3px));}
 }
-.bubble.inducteur{
-  width:170px;height:170px; background:var(--magenta); color:#22081a; font-size:22px; z-index:5;
-  box-shadow:0 0 40px rgba(232,80,143,0.45);
-}
-.bubble.mot{
-  background:var(--bg-panel-2); border:1px solid var(--line); color:var(--text); font-size:14px;
-  width:96px; height:96px; position:relative;
-}
+.mot-chip:nth-child(3n){border-color:rgba(53,208,178,0.5);}
+.mot-chip:nth-child(4n){border-color:rgba(242,177,52,0.5);}
 .bubble-rm{
-  position:absolute; top:-6px; right:-6px; width:22px; height:22px; border-radius:50%;
-  background:var(--danger); color:#2a0d0d; font-family:'Manrope',sans-serif; font-weight:800; font-size:12px;
-  display:flex; align-items:center; justify-content:center; cursor:pointer; z-index:6;
-  box-shadow:0 2px 6px rgba(0,0,0,0.4); animation:none;
+  width:18px; height:18px; border-radius:50%; background:var(--danger); color:#2a0d0d;
+  font-family:'Manrope',sans-serif; font-weight:800; font-size:11px;
+  display:flex; align-items:center; justify-content:center; cursor:pointer; flex-shrink:0;
 }
 .bubble-rm:hover{background:#ff7373;}
-.bubble.mot:nth-child(3n){border-color:rgba(53,208,178,0.5);}
-.bubble.mot:nth-child(4n){border-color:rgba(242,177,52,0.5);}
 
 .wordbar{display:flex; gap:10px; margin-top:14px;}
 .wordbar input{flex:1;}
@@ -213,8 +211,8 @@ th{color:var(--text-dim); font-weight:700; font-size:12.5px; text-transform:uppe
 
 @media(max-width:640px){
   main{padding:20px 14px 70px;}
-  .bubble.inducteur{width:130px;height:130px; font-size:18px;}
-  .bubble.mot{width:80px;height:80px; font-size:12.5px;}
+  .bubble-inducteur-hero{font-size:18px; padding:16px 26px;}
+  .mot-chip{font-size:13px; padding:8px 14px;}
 }
 </style>
 </head>
@@ -716,91 +714,34 @@ function d_setPhase(p){ state.leconDraft.phase = p; render(); }
 
 function renderBubbleField(){
   const d = state.leconDraft;
-  d.MotsPos = d.MotsPos || {};
   renderBubbles('bubbleField', d.Inducteur, d.Mots||[],
-    i=>{ d.Mots.splice(i,1); renderBubbleField(); },
-    d.MotsPos,
-    (mot,x,y)=>{ d.MotsPos[mot] = {x,y}; renderBubbleField(); }
+    i=>{ d.Mots.splice(i,1); renderBubbleField(); }
   );
 }
 
-// Placement en spirale avec évitement de collision : chaque mot cherche la
-// première position libre en s'éloignant progressivement du centre — sauf si
-// une position manuelle existe déjà (posMap), auquel cas on la respecte telle
-// quelle (l'élève/le prof a fait glisser la bulle à cet endroit).
-// onRemove(index) optionnel : bouton ✕ sur chaque bulle-mot.
-// posMap + onMove(mot,x,y) optionnels : rend chaque bulle-mot déplaçable à la souris.
-function renderBubbles(elId, inducteur, mots, onRemove, posMap, onMove){
+// Rendu en flux (flex-wrap) : le navigateur répartit lui-même les mots sur
+// autant de lignes que nécessaire. Aucun calcul de position, donc aucun
+// chevauchement ni dépassement du cadre possible, quel que soit le nombre de
+// mots ou les doublons. onRemove(index) optionnel : bouton ✕ sur chaque mot.
+function renderBubbles(elId, inducteur, mots, onRemove){
   const el = document.getElementById(elId);
   if(!el) return;
-  const w = el.clientWidth, h = el.clientHeight;
-  const cx = w/2, cy = h/2;
-  const rInd = 85;
-  const placed = [{x:cx, y:cy, r:rInd}];
-  let html = `<div class="bubble inducteur" style="left:${cx-rInd}px; top:${cy-rInd}px;">${escapeHtml(inducteur||'…')}</div>`;
+  let html = `<div class="bubble-inducteur-hero">${escapeHtml(inducteur||'…')}</div>`;
+  html += `<div class="mots-wrap">`;
   (mots||[]).forEach((mot,i)=>{
-    const r = 48;
-    let x, y;
-    const manual = posMap && posMap[mot];
-    if(manual){
-      x = Math.max(r, Math.min(w-r, manual.x));
-      y = Math.max(r, Math.min(h-r, manual.y));
-    } else {
-      let angle = i * 137.5 * Math.PI/180;
-      let radius = rInd + 55;
-      let ok=false, tries=0;
-      x=cx; y=cy;
-      while(!ok && tries<150){
-        const rawX = cx + Math.cos(angle)*radius;
-        const rawY = cy + Math.sin(angle)*radius;
-        const cx2 = Math.max(r, Math.min(w-r, rawX));
-        const cy2 = Math.max(r, Math.min(h-r, rawY));
-        ok = placed.every(p=>{
-          const dx=cx2-p.x, dy=cy2-p.y;
-          return Math.sqrt(dx*dx+dy*dy) >= (p.r + r + 8);
-        });
-        if(ok){ x = cx2; y = cy2; }
-        else { radius += 12; angle += 0.34; }
-        tries++;
-      }
-      x = Math.max(r, Math.min(w-r, x));
-      y = Math.max(r, Math.min(h-r, y));
-    }
-    placed.push({x, y, r});
-    const dx = (Math.random()*8-4).toFixed(1), dy=(Math.random()*8-4).toFixed(1);
+    const dx = (Math.random()*6-3).toFixed(1), dy=(Math.random()*6-3).toFixed(1);
     const dur = (5+Math.random()*4).toFixed(1);
-    const draggableAttr = onMove ? 'draggable="true"' : '';
-    html += `<div class="bubble mot" data-idx="${i}" ${draggableAttr} style="left:${x-r}px; top:${y-r}px; --dx:${dx}px; --dy:${dy}px; animation-duration:${dur}s; ${onMove?'cursor:grab;':''}">${escapeHtml(mot)}${onRemove?'<span class="bubble-rm">✕</span>':''}</div>`;
+    html += `<span class="mot-chip" data-idx="${i}" style="--dx:${dx}px; --dy:${dy}px; animation-duration:${dur}s;">${escapeHtml(mot)}${onRemove?'<span class="bubble-rm">✕</span>':''}</span>`;
   });
+  html += `</div>`;
   el.innerHTML = html;
   if(onRemove){
-    el.querySelectorAll('.bubble.mot').forEach(b=>{
+    el.querySelectorAll('.mot-chip').forEach(b=>{
       b.querySelector('.bubble-rm').addEventListener('click', (e)=>{
         e.stopPropagation();
         onRemove(parseInt(b.dataset.idx,10));
       });
     });
-  }
-  if(onMove){
-    const bubbleEls = el.querySelectorAll('.bubble.mot');
-    bubbleEls.forEach(b=>{
-      b.addEventListener('dragstart', e=>{
-        e.dataTransfer.setData('text/plain', b.dataset.idx);
-        e.dataTransfer.effectAllowed = 'move';
-      });
-    });
-    el.ondragover = e=>e.preventDefault();
-    el.ondrop = e=>{
-      e.preventDefault();
-      const idx = parseInt(e.dataTransfer.getData('text/plain'),10);
-      if(isNaN(idx)) return;
-      const mot = (mots||[])[idx];
-      if(mot===undefined) return;
-      const rect = el.getBoundingClientRect();
-      const x = e.clientX - rect.left;
-      const y = e.clientY - rect.top;
-      onMove(mot, x, y);
-    };
   }
 }
 
@@ -1118,11 +1059,8 @@ function eleveTabBrainstorm(){
 }
 function renderBubbleFieldGroupe(){
   const g = state.group;
-  g.MotsPos = g.MotsPos || {};
   renderBubbles('bubbleFieldG', g.Theme, g.Mots||[],
-    i=>{ g.Mots.splice(i,1); saveGroupe({Mots:g.Mots}); renderBubbleFieldGroupe(); },
-    g.MotsPos,
-    (mot,x,y)=>{ g.MotsPos[mot] = {x,y}; saveGroupe({MotsPos:g.MotsPos}); renderBubbleFieldGroupe(); }
+    i=>{ g.Mots.splice(i,1); saveGroupe({Mots:g.Mots}); renderBubbleFieldGroupe(); }
   );
 }
 
